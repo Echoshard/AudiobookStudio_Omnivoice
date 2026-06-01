@@ -1,23 +1,31 @@
-# Embedded Python runtime
+# Virtual Environments
+.venv/
+venv/
+
+# Legacy Embedded Python runtime
 python_embedded/
 
 # FFmpeg binary
 ffmpeg/
 
-# Downloaded model files
+# Downloaded model files (Hugging Face cache, 2.5GB+)
 models/
 
-# Generated audio files
+# Generated and temporary audio files
 *.wav
 *.mp3
 quick_sample.wav
+test_output.wav
 file_list.txt
 
-# Temp files
+# Temporary reference voice files
 temp_pocket_ref.wav
+temp_omnivoice_ref.wav
 *.speed.wav
 
-# Python
+# Python cache files
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.ipynb_checkpoints/

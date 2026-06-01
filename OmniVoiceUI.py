@@ -1,4 +1,4 @@
-﻿import gc
+import gc
 import os
 import re
 import subprocess
@@ -11,106 +11,16 @@ import tkinter as tk
 
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-np = None
-fitz = None
-requests = None
-BeautifulSoup = None
-ebooklib = None
-epub = None
-sf = None
-scipy_wav = None
-torch = None
-TTSModel = None
-POCKET_AVAILABLE = False
-_libs_loaded = False
+# Import speech synthesis core
+import VoiceCore
 
 DEFAULT_CHUNK_SIZE = 100
 SAMPLE_TEXT = (
     "Greetings Human, I am here to tell you a cat fact. "
     "Did you know that cats sleep for 70% of their lives?"
 )
-VOICE_OPTIONS = [
-    "alba",
-    "marius",
-    "javert",
-    "jean",
-    "fantine",
-    "cosette",
-    "eponine",
-    "azelma",
-]
 
-pocket_model = None
-is_model_loading = False
 stop_event = threading.Event()
-
-
-def _ensure_libs_loaded():
-    global np, fitz, requests, BeautifulSoup, ebooklib, epub
-    global sf, scipy_wav, torch, TTSModel, POCKET_AVAILABLE, _libs_loaded
-    if _libs_loaded:
-        return
-
-    import numpy
-    np = numpy
-
-    import fitz as _fitz
-    fitz = _fitz
-
-    import requests as _requests
-    requests = _requests
-
-    from bs4 import BeautifulSoup as _bs
-    BeautifulSoup = _bs
-
-    import ebooklib as _ebooklib
-    ebooklib = _ebooklib
-    from ebooklib import epub as _epub
-    epub = _epub
-
-    import soundfile as _soundfile
-    sf = _soundfile
-
-    import scipy.io.wavfile as _wavfile
-    scipy_wav = _wavfile
-
-    try:
-        from pocket_tts import TTSModel as _tts_model
-        import torch as _torch
-
-        TTSModel = _tts_model
-        torch = _torch
-        POCKET_AVAILABLE = True
-    except ImportError:
-        POCKET_AVAILABLE = False
-        print("WARNING: PocketTTS or Torch not found. Install them first.")
-
-    _libs_loaded = True
-
-
-def ensure_model_loaded():
-    global pocket_model, is_model_loading
-    if pocket_model is not None:
-        return True
-
-    if is_model_loading:
-        while is_model_loading:
-            time.sleep(0.5)
-        return pocket_model is not None
-
-    is_model_loading = True
-    _ensure_libs_loaded()
-    try:
-        print("[System] Loading PocketTTS model...")
-        pocket_model = TTSModel.load_model()
-        print("[System] Model loaded successfully (CPU).")
-    except Exception as exc:
-        print(f"[System] Failed to load model: {exc}")
-        pocket_model = None
-    finally:
-        is_model_loading = False
-
-    return pocket_model is not None
 
 
 def split_text_into_chunks(words, original_chunk_size, wiggle_room=20):
@@ -164,121 +74,6 @@ def split_text_into_chunks(words, original_chunk_size, wiggle_room=20):
         chunks.append(current_chunk)
 
     return chunks
-
-
-def prepare_voice_state(ref_audio_path, voice_name):
-    global pocket_model
-    final_prompt = voice_name
-    temp_file = None
-
-    if ref_audio_path and os.path.exists(ref_audio_path):
-        try:
-            data, samplerate = sf.read(ref_audio_path)
-            max_samples = 5 * samplerate
-            if len(data) > max_samples:
-                print(f"[System] Truncating ref audio from {len(data)} to {max_samples} samples.")
-                data = data[:max_samples]
-
-            temp_file = os.path.abspath("temp_pocket_ref.wav")
-            sf.write(temp_file, data, samplerate, subtype="PCM_16")
-            final_prompt = temp_file
-            print(f"[System] Using processed ref audio: {temp_file}")
-        except Exception as exc:
-            print(f"[Warning] Failed to process ref audio: {exc}. Falling back to name.")
-            final_prompt = voice_name
-
-    state = pocket_model.get_state_for_audio_prompt(final_prompt)
-    return state, temp_file
-
-
-def _generate_pocket_safe(state, text):
-    global pocket_model
-    chunk_size = 200
-
-    raw_chunks = re.split(r"([.!?]+)", text)
-    chunks = []
-    current = ""
-    for part in raw_chunks:
-        if len(current) + len(part) < chunk_size:
-            current += part
-        else:
-            if current:
-                chunks.append(current)
-            current = part
-    if current:
-        chunks.append(current)
-
-    final_chunks = []
-    for chunk in chunks:
-        if not chunk.strip():
-            continue
-        while len(chunk) > chunk_size:
-            split = chunk[:chunk_size].rfind(" ")
-            if split == -1:
-                split = chunk_size
-            final_chunks.append(chunk[:split])
-            chunk = chunk[split:]
-        final_chunks.append(chunk)
-
-    full_audio = []
-    for chunk in final_chunks:
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        tensor = pocket_model.generate_audio(state, chunk)
-        if tensor is not None:
-            full_audio.append(tensor.numpy())
-
-    if not full_audio:
-        return None
-    return np.concatenate(full_audio)
-
-
-def apply_speed_to_audio(file_path, speed):
-    if speed == 1.0:
-        return True
-
-    temp_file = file_path + ".speed.wav"
-    try:
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            file_path,
-            "-filter:a",
-            f"atempo={speed}",
-            temp_file,
-        ]
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
-            os.replace(temp_file, file_path)
-            return True
-
-        print(f"[System] FFmpeg speed error: {result.stderr}")
-        return False
-    except Exception as exc:
-        print(f"[System] Failed to apply speed: {exc}")
-        return False
-    finally:
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except OSError:
-                pass
-
-
-def synthesize_chunk_to_file(state, text, out_path, temp_val=0.7, speed_val=1.0):
-    global pocket_model
-    pocket_model.temp = temp_val
-
-    audio_np = _generate_pocket_safe(state, text)
-    if audio_np is None:
-        raise RuntimeError("No audio generated.")
-
-    scipy_wav.write(out_path, pocket_model.sample_rate, audio_np)
-
-    if speed_val != 1.0:
-        apply_speed_to_audio(out_path, speed_val)
 
 
 def combine_output_to_mp3(output_files, output_dir, custom_name="final_output"):
@@ -338,17 +133,17 @@ def combine_output_to_mp3(output_files, output_dir, custom_name="final_output"):
                 pass
 
 
-class PocketTTSWindow(tk.Tk):
+class OmniVoiceWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PocketTTS Generator")
-        self.geometry("920x760")
-        self.minsize(850, 760)
-        self.configure(bg="#171a21")
+        self.title("OmniVoice Audiobook Studio")
+        self.geometry("820x980")
+        self.minsize(850, 780)
+        self.configure(bg="#1e222b")
 
         self.ref_audio_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
-        self.voice_var = tk.StringVar(value=VOICE_OPTIONS[0])
+        self.voice_var = tk.StringVar(value="female, low pitch, british accent")
         self.chunk_size_var = tk.IntVar(value=DEFAULT_CHUNK_SIZE)
         self.temp_var = tk.DoubleVar(value=0.7)
         self.speed_var = tk.DoubleVar(value=1.0)
@@ -357,35 +152,72 @@ class PocketTTSWindow(tk.Tk):
         self.mp3_name_var = tk.StringVar(value="final_output")
         self.status_var = tk.StringVar(value="Ready")
         self.chunk_info_var = tk.StringVar(value="")
+        self.device_info_var = tk.StringVar(value="Active Device: Detecting...")
 
         self._configure_theme()
         self._build_layout()
 
+        # Trace reference audio selection to toggle voice entry field
+        self.ref_audio_var.trace_add("write", self._on_ref_audio_changed)
+        self._on_ref_audio_changed()
+
+        # Start device detection in a background thread to keep launch instant
+        threading.Thread(target=self._detect_device_at_startup, daemon=True).start()
+
+    def _on_ref_audio_changed(self, *args):
+        if hasattr(self, "voice_entry") and hasattr(self, "voice_label"):
+            if self.ref_audio_var.get().strip():
+                self.voice_entry.configure(state="disabled")
+                self.voice_label.state(["disabled"])
+            else:
+                self.voice_entry.configure(state="normal")
+                self.voice_label.state(["!disabled"])
+
+    def _detect_device_at_startup(self):
+        try:
+            device_str = VoiceCore.get_active_device()
+        except Exception:
+            device_str = "CPU"
+        self._ui(self.device_info_var.set, f"Active Device: {device_str}")
+
     def _configure_theme(self):
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("Root.TFrame", background="#171a21")
-        style.configure("Card.TFrame", background="#1f2430")
-        style.configure("Title.TLabel", background="#171a21", foreground="#8ec5ff", font=("Segoe UI", 18, "bold"))
-        style.configure("Sub.TLabel", background="#171a21", foreground="#8c98b8", font=("Segoe UI", 10))
-        style.configure("CardTitle.TLabel", background="#1f2430", foreground="#8ec5ff", font=("Segoe UI", 11, "bold"))
-        style.configure("Body.TLabel", background="#1f2430", foreground="#d7deed")
-        style.configure("Info.TLabel", background="#1f2430", foreground="#b1bbd1")
-        style.configure("Status.TLabel", background="#1f2430", foreground="#9ee6a8", font=("Segoe UI", 11, "bold"))
-        style.configure("TEntry", fieldbackground="#2a3142", foreground="#edf2ff")
-        style.configure("TCombobox", fieldbackground="#2a3142", foreground="#edf2ff")
-        style.map("TCombobox", fieldbackground=[("readonly", "#2a3142")], foreground=[("readonly", "#edf2ff")])
-        style.configure("TSpinbox", fieldbackground="#2a3142", foreground="#edf2ff")
-        style.configure("TCheckbutton", background="#1f2430", foreground="#d7deed")
-        style.configure("TButton", background="#36415a", foreground="#f4f7ff", padding=8)
-        style.map("TButton", background=[("active", "#475675")])
-        style.configure("Accent.TButton", background="#8ec5ff", foreground="#102030", padding=9)
-        style.map("Accent.TButton", background=[("active", "#a6d4ff")])
-        style.configure("Danger.TButton", background="#f08ea2", foreground="#201419", padding=9)
-        style.map("Danger.TButton", background=[("active", "#ffabc0")])
-        style.configure("Sample.TButton", background="#7fd9c5", foreground="#112822", padding=9)
-        style.map("Sample.TButton", background=[("active", "#93ead6")])
-        style.configure("TProgressbar", troughcolor="#2a3142", background="#8ec5ff", bordercolor="#2a3142")
+        style.configure("Root.TFrame", background="#1e222b")
+        style.configure("Card.TFrame", background="#282c34")
+        
+        style.configure("Title.TLabel", background="#1e222b", foreground="#61afef", font=("Segoe UI", 18, "bold"))
+        style.map("Title.TLabel", foreground=[("!disabled", "#61afef")])
+        
+        style.configure("Sub.TLabel", background="#1e222b", foreground="#7f848e", font=("Segoe UI", 10))
+        style.map("Sub.TLabel", foreground=[("!disabled", "#7f848e")])
+        
+        style.configure("CardTitle.TLabel", background="#282c34", foreground="#61afef", font=("Segoe UI", 11, "bold"))
+        style.map("CardTitle.TLabel", foreground=[("!disabled", "#61afef")])
+        
+        style.configure("Body.TLabel", background="#282c34", foreground="#edf2f7")
+        style.map("Body.TLabel", foreground=[("disabled", "#5c6370"), ("!disabled", "#edf2f7")])
+        
+        style.configure("Info.TLabel", background="#282c34", foreground="#abb2bf")
+        style.map("Info.TLabel", foreground=[("!disabled", "#abb2bf")])
+        
+        style.configure("Status.TLabel", background="#282c34", foreground="#98c379", font=("Segoe UI", 11, "bold"))
+        style.map("Status.TLabel", foreground=[("!disabled", "#98c379")])
+        
+        style.configure("TEntry", fieldbackground="#21252b", foreground="#abb2bf")
+        style.configure("TCombobox", fieldbackground="#21252b", foreground="#abb2bf")
+        style.map("TCombobox", fieldbackground=[("readonly", "#21252b")], foreground=[("readonly", "#abb2bf")])
+        style.configure("TSpinbox", fieldbackground="#21252b", foreground="#abb2bf")
+        style.configure("TCheckbutton", background="#282c34", foreground="#abb2bf")
+        style.configure("TButton", background="#3e4452", foreground="#abb2bf", padding=8)
+        style.map("TButton", background=[("active", "#4b5263")])
+        style.configure("Accent.TButton", background="#61afef", foreground="#1e222b", padding=9)
+        style.map("Accent.TButton", background=[("active", "#75b5ff")])
+        style.configure("Danger.TButton", background="#e06c75", foreground="#1e222b", padding=9)
+        style.map("Danger.TButton", background=[("active", "#e57c83")])
+        style.configure("Sample.TButton", background="#d19a66", foreground="#1e222b", padding=9)
+        style.map("Sample.TButton", background=[("active", "#e5b182")])
+        style.configure("TProgressbar", troughcolor="#21252b", background="#61afef", bordercolor="#21252b")
 
     def _build_layout(self):
         root = ttk.Frame(self, style="Root.TFrame", padding=18)
@@ -393,7 +225,13 @@ class PocketTTSWindow(tk.Tk):
         root.columnconfigure(0, weight=1)
         root.rowconfigure(1, weight=1)
 
-        ttk.Label(root, text="PocketTTS Generator", style="Title.TLabel").grid(row=0, column=0, sticky="ew")
+        # Header with title on left and active device on right
+        header = ttk.Frame(root, style="Root.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+
+        ttk.Label(header, text="OmniVoice Audiobook Studio", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.device_info_var, style="Sub.TLabel").grid(row=0, column=1, sticky="e")
 
         content = ttk.Frame(root, style="Root.TFrame")
         content.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
@@ -440,9 +278,9 @@ class PocketTTSWindow(tk.Tk):
             text_frame,
             wrap="word",
             height=5,
-            bg="#2a3142",
-            fg="#edf2ff",
-            insertbackground="#edf2ff",
+            bg="#21252b",
+            fg="#abb2bf",
+            insertbackground="#abb2bf",
             relief="flat",
             padx=10,
             pady=10,
@@ -461,30 +299,39 @@ class PocketTTSWindow(tk.Tk):
 
     def _build_settings_card(self, parent):
         frame = self._card(parent, "Settings")
+        
+        # Subtitle hint explaining custom voice prompts vs ref audio cloning
+        ttk.Label(frame, text="Type a custom voice prompt (e.g. 'deep warm male, slow pace') - only used if no Ref Audio is provided", style="Info.TLabel", font=("Segoe UI", 9, "italic")).grid(row=1, column=0, sticky="w", pady=(0, 8))
+        
         body = ttk.Frame(frame, style="Card.TFrame")
-        body.grid(row=1, column=0, sticky="ew")
+        body.grid(row=2, column=0, sticky="ew")
         for col in range(4):
             body.columnconfigure(col, weight=1 if col in (1, 3) else 0)
 
-        ttk.Label(body, text="Voice Name:", style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
-        ttk.Combobox(body, textvariable=self.voice_var, values=VOICE_OPTIONS, state="readonly").grid(row=0, column=1, sticky="ew", pady=5)
+        # Row 0: Voice Prompt & Chunk Size
+        self.voice_label = ttk.Label(body, text="Voice Prompt:", style="Body.TLabel")
+        self.voice_label.grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
+        self.voice_entry = ttk.Entry(body, textvariable=self.voice_var)
+        self.voice_entry.grid(row=0, column=1, sticky="ew", pady=5)
 
         ttk.Label(body, text="Chunk Size (words):", style="Body.TLabel").grid(row=0, column=2, sticky="w", padx=(12, 10), pady=5)
         ttk.Spinbox(body, from_=10, to=5000, textvariable=self.chunk_size_var, width=10).grid(row=0, column=3, sticky="w", pady=5)
 
+        # Row 1: Temperature Scale & Speed Scale
         ttk.Label(body, text="Temperature:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
-        tk.Scale(body, from_=0.1, to=2.0, resolution=0.1, orient="horizontal", variable=self.temp_var, bg="#1f2430", fg="#d7deed", highlightthickness=0, troughcolor="#2a3142").grid(row=1, column=1, sticky="ew", pady=5)
+        tk.Scale(body, from_=0.1, to=2.0, resolution=0.1, orient="horizontal", variable=self.temp_var, bg="#282c34", fg="#abb2bf", highlightthickness=0, troughcolor="#21252b").grid(row=1, column=1, sticky="ew", pady=5)
 
         ttk.Label(body, text="Speed:", style="Body.TLabel").grid(row=1, column=2, sticky="w", padx=(12, 10), pady=5)
-        tk.Scale(body, from_=0.5, to=2.0, resolution=0.05, orient="horizontal", variable=self.speed_var, bg="#1f2430", fg="#d7deed", highlightthickness=0, troughcolor="#2a3142").grid(row=1, column=3, sticky="ew", pady=5)
+        tk.Scale(body, from_=0.5, to=2.0, resolution=0.05, orient="horizontal", variable=self.speed_var, bg="#282c34", fg="#abb2bf", highlightthickness=0, troughcolor="#21252b").grid(row=1, column=3, sticky="ew", pady=5)
 
+        # Row 2: Start Chunk & MP3 Combine settings
         ttk.Label(body, text="Start Chunk:", style="Body.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=5)
         ttk.Spinbox(body, from_=1, to=9999, textvariable=self.start_chunk_var, width=10).grid(row=2, column=1, sticky="w", pady=5)
 
         mp3_row = ttk.Frame(body, style="Card.TFrame")
-        mp3_row.grid(row=2, column=2, columnspan=2, sticky="w", pady=5)
+        mp3_row.grid(row=2, column=2, columnspan=2, sticky="ew", pady=5)
         ttk.Checkbutton(mp3_row, text="Combine into MP3", variable=self.combine_mp3_var).pack(side="left")
-        ttk.Entry(mp3_row, textvariable=self.mp3_name_var, width=22).pack(side="left", padx=(10, 0))
+        ttk.Entry(mp3_row, textvariable=self.mp3_name_var, width=30).pack(side="left", padx=(10, 0))
         return frame
 
     def _build_actions_card(self, parent):
@@ -521,8 +368,8 @@ class PocketTTSWindow(tk.Tk):
         self.text_input.delete("1.0", "end")
         self.text_input.insert("1.0", value)
 
-    def _ui(self, callback, *args):
-        self.after(0, lambda: callback(*args))
+    def _ui(self, callback, *args, **kwargs):
+        self.after(0, lambda: callback(*args, **kwargs))
 
     def _set_status(self, text):
         self._ui(self.status_var.set, text)
@@ -532,6 +379,16 @@ class PocketTTSWindow(tk.Tk):
 
     def _set_progress(self, value, maximum):
         self._ui(self.progress_bar.configure, maximum=max(maximum, 1), value=value)
+
+    def _set_progress_mode(self, mode):
+        def cb():
+            self.progress_bar.configure(mode=mode)
+            if mode == "indeterminate":
+                self.progress_bar.start(10)
+            else:
+                self.progress_bar.stop()
+                self.progress_bar.configure(value=0, maximum=1)
+        self._ui(cb)
 
     def _set_generate_enabled(self, enabled):
         self._ui(self.generate_btn.configure, state=("normal" if enabled else "disabled"))
@@ -552,7 +409,14 @@ class PocketTTSWindow(tk.Tk):
             return
 
         try:
-            _ensure_libs_loaded()
+            # Dynamically ensure required libs are loaded in VoiceCore
+            VoiceCore.load_libs()
+            
+            import fitz
+            import ebooklib
+            from ebooklib import epub
+            from bs4 import BeautifulSoup
+            
             loaded_text = ""
             lower_path = file_path.lower()
 
@@ -585,7 +449,10 @@ class PocketTTSWindow(tk.Tk):
 
         def task():
             try:
-                _ensure_libs_loaded()
+                VoiceCore.load_libs()
+                import requests
+                from bs4 import BeautifulSoup
+                
                 response = requests.get(url, timeout=20)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")
@@ -643,25 +510,22 @@ class PocketTTSWindow(tk.Tk):
         self.status_var.set("Stopping after current chunk...")
 
     def _generate_speech(self):
-        temp_file = None
         try:
             output_directory = self.output_dir_var.get().strip() or os.path.dirname(os.path.abspath(__file__))
             self._ui(self.output_dir_var.set, output_directory)
             os.makedirs(output_directory, exist_ok=True)
 
             self._set_status("Loading model...")
-            if not ensure_model_loaded():
-                self._set_status("Failed to load PocketTTS model.")
+            if not VoiceCore.ensure_model_loaded(
+                status_cb=self._set_status,
+                progress_cb=self._set_progress_mode,
+                device_cb=self.device_info_var.set
+            ):
+                self._set_status("Failed to load model.")
                 return
 
             ref_path = self.ref_audio_var.get().strip()
             voice_name = self.voice_var.get().strip()
-
-            try:
-                state, temp_file = prepare_voice_state(ref_path, voice_name)
-            except Exception as exc:
-                self._set_status(f"Voice load error: {exc}")
-                return
 
             full_text = self._get_text().strip()
             if not full_text:
@@ -676,10 +540,12 @@ class PocketTTSWindow(tk.Tk):
 
             total_chunks = len(all_chunks[start_chunk_idx:])
             self._set_progress(0, len(all_chunks))
-            temp_val = float(self.temp_var.get())
             speed_val = float(self.speed_var.get())
             times = []
             output_files = []
+
+            total_words_generated = 0
+            total_time_elapsed = 0.0
 
             for idx, chunk in enumerate(all_chunks[start_chunk_idx:], start=start_chunk_idx):
                 if stop_event.is_set():
@@ -688,25 +554,35 @@ class PocketTTSWindow(tk.Tk):
 
                 started = time.time()
                 chunk_text = " ".join(chunk)
+                chunk_word_count = len(chunk)
+
                 if times:
                     avg_time = (sum(times) / len(times)) / 60.0
                     remaining_chunks = total_chunks - (idx - start_chunk_idx + 1)
                     remaining_time = avg_time * remaining_chunks
+                    wps = total_words_generated / total_time_elapsed if total_time_elapsed > 0 else 0.0
+                    info = f"Processing chunk {idx + 1}/{len(all_chunks)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
                 else:
-                    avg_time = 0.0
-                    remaining_time = 0.0
+                    info = f"Processing chunk {idx + 1}/{len(all_chunks)}"
 
-                info = f"Processing chunk {idx + 1}/{len(all_chunks)}"
-                if avg_time > 0:
-                    info += f" | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m"
                 self._set_chunk_info(info)
                 self._set_status(f"Generating chunk {idx + 1}...")
 
                 out_path = os.path.join(output_directory, f"output_{idx + 1}.wav")
                 success = False
                 for attempt in range(1, 4):
+                    if stop_event.is_set():
+                        break
                     try:
-                        synthesize_chunk_to_file(state, chunk_text, out_path, temp_val, speed_val)
+                        VoiceCore.synthesize_audio(
+                            chunk_text,
+                            out_path,
+                            voice=voice_name,
+                            ref_audio_path=ref_path,
+                            speed=speed_val,
+                            status_cb=self._set_status,
+                            stop_event=stop_event
+                        )
                         success = True
                         break
                     except Exception as chunk_error:
@@ -716,6 +592,14 @@ class PocketTTSWindow(tk.Tk):
                             break
                         time.sleep(1)
 
+                if stop_event.is_set():
+                    if os.path.exists(out_path):
+                        try:
+                            os.remove(out_path)
+                        except OSError:
+                            pass
+                    break
+
                 if not success:
                     continue
 
@@ -723,6 +607,10 @@ class PocketTTSWindow(tk.Tk):
                 self._set_progress(idx + 1, len(all_chunks))
                 elapsed = time.time() - started
                 times.append(elapsed)
+
+                total_words_generated += chunk_word_count
+                total_time_elapsed += elapsed
+
                 print(f"[Chunk {idx + 1}] Done in {elapsed:.2f}s")
                 gc.collect()
 
@@ -738,36 +626,37 @@ class PocketTTSWindow(tk.Tk):
                 else:
                     self._set_status("Done. Files saved, but MP3 merge failed.")
         except Exception as exc:
-            print("\nUncaught error in generate_speech():")
+            print("\nUncaught error in _generate_speech():")
             traceback.print_exc()
             self._set_status(f"An error occurred: {exc}")
         finally:
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except OSError:
-                    pass
             self._set_generate_enabled(True)
 
     def generate_quick_sample(self):
         def task():
-            temp_ref = None
             temp_out = os.path.abspath("quick_sample.wav")
             try:
                 self._set_status("Generating quick sample...")
-                if not ensure_model_loaded():
-                    self._set_status("Failed to load PocketTTS model.")
+                if not VoiceCore.ensure_model_loaded(
+                    status_cb=self._set_status,
+                    progress_cb=self._set_progress_mode,
+                    device_cb=self.device_info_var.set
+                ):
+                    self._set_status("Failed to load model.")
                     return
 
-                state, temp_ref = prepare_voice_state(self.ref_audio_var.get().strip(), self.voice_var.get().strip())
-                synthesize_chunk_to_file(state, SAMPLE_TEXT, temp_out, float(self.temp_var.get()), float(self.speed_var.get()))
+                ref_path = self.ref_audio_var.get().strip()
+                voice_name = self.voice_var.get().strip()
+                speed_val = float(self.speed_var.get())
 
-                if temp_ref and os.path.exists(temp_ref):
-                    try:
-                        os.remove(temp_ref)
-                    except OSError:
-                        pass
-                    temp_ref = None
+                VoiceCore.synthesize_audio(
+                    SAMPLE_TEXT,
+                    temp_out,
+                    voice=voice_name,
+                    ref_audio_path=ref_path,
+                    speed=speed_val,
+                    status_cb=self._set_status
+                )
 
                 self._set_status("Playing quick sample...")
                 if sys.platform == "win32":
@@ -780,11 +669,6 @@ class PocketTTSWindow(tk.Tk):
                 traceback.print_exc()
                 self._set_status(f"Quick sample error: {exc}")
             finally:
-                if temp_ref and os.path.exists(temp_ref):
-                    try:
-                        os.remove(temp_ref)
-                    except OSError:
-                        pass
                 if os.path.exists(temp_out):
                     try:
                         os.remove(temp_out)
@@ -795,7 +679,7 @@ class PocketTTSWindow(tk.Tk):
 
 
 def main():
-    app = PocketTTSWindow()
+    app = OmniVoiceWindow()
     app.mainloop()
 
 
