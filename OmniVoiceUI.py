@@ -284,8 +284,7 @@ class OmniVoiceWindow(tk.Tk):
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
 
-        ttk.Button(body, text="Export Sentence", command=lambda: self.export_sentence(False)).pack(side="left")
-        ttk.Button(body, text="Export All Sentences", command=lambda: self.export_sentence(True)).pack(side="left", padx=(8, 0))
+        ttk.Button(body, text="Export Sentence", command=self.export_sentence).pack(side="left")
         ttk.Button(body, text="Open Folder", command=self.open_output_folder).pack(side="left", padx=(8, 0))
 
         self.generate_btn = ttk.Button(body, text="Generate Speech", style="Accent.TButton", command=self.start_generation)
@@ -409,27 +408,20 @@ class OmniVoiceWindow(tk.Tk):
 
         threading.Thread(target=task, daemon=True).start()
 
-    def export_sentence(self, all_sentences=False):
+    def export_sentence(self):
         try:
             full_text = self._get_text().strip()
             sentences = VoiceCore.split_into_sentences(full_text)
 
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            if all_sentences:
-                for index, sentence in enumerate(sentences, start=1):
-                    path = os.path.join(script_dir, f"sentence_{index}.txt")
-                    with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(sentence)
-                self.status_var.set(f"All {len(sentences)} sentences exported.")
+            sentence_id = self.start_sentence_var.get()
+            if 1 <= sentence_id <= len(sentences):
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                path = os.path.join(script_dir, f"sentence_{sentence_id}.txt")
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(sentences[sentence_id - 1])
+                self.status_var.set(f"Sentence {sentence_id} exported.")
             else:
-                sentence_id = self.start_sentence_var.get()
-                if 1 <= sentence_id <= len(sentences):
-                    path = os.path.join(script_dir, f"sentence_{sentence_id}.txt")
-                    with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(sentences[sentence_id - 1])
-                    self.status_var.set(f"Sentence {sentence_id} exported.")
-                else:
-                    self.status_var.set("Invalid sentence ID.")
+                self.status_var.set("Invalid sentence ID.")
         except Exception as exc:
             self.status_var.set(f"Export error: {exc}")
 
