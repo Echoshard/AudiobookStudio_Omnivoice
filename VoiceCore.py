@@ -115,9 +115,8 @@ def prepare_ref_audio(ref_audio_path):
         return ref_audio_path
 
 
-def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb=None, stop_event=None):
-    global _model
-    # Split text into sentences using standard punctuation boundaries, keeping delimiters
+def split_into_sentences(text):
+    # Split by standard punctuation boundaries, keeping delimiters
     raw_parts = re.split(r"([.!?\n]+)", text)
     sentences = []
     for part in raw_parts:
@@ -130,36 +129,46 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb
                 sentences.append(part)
         else:
             sentences.append(part)
-    sentences = [s.strip() for s in sentences if s.strip()]
-    total = len(sentences)
-
-    full_audio = []
-    for idx, sentence in enumerate(sentences):
-        if stop_event and stop_event.is_set():
-            break
-        if not sentence:
+    
+    final_sentences = []
+    for s in sentences:
+        s = s.strip()
+        if not s:
             continue
-        try:
-            if status_cb:
-                status_cb(f"Synthesizing sentence {idx + 1}/{total}... (takes a moment on CPU)")
+        words = s.split()
+        if len(words) <= 100:
+            final_sentences.append(s)
+        else:
+            # Split long sentences into sub-sentences of at most 100 words
+            for i in range(0, len(words), 100):
+                sub_chunk = " ".join(words[i : i + 100])
+                final_sentences.append(sub_chunk)
+    return final_sentences
 
-            kwargs = {"speed": speed_val}
-            if ref_audio:
-                kwargs["ref_audio"] = ref_audio
-            elif instruct:
-                kwargs["instruct"] = instruct
 
-            print(f"[VoiceCore] Synthesizing sentence {idx + 1}/{total}: '{sentence}'")
-            out_list = _model.generate(text=sentence, **kwargs)
-            if out_list and len(out_list) > 0:
-                full_audio.append(out_list[0])
-        except Exception as e:
-            print(f"[VoiceCore] [Warning] Failed to generate: {e}")
-            traceback.print_exc()
-
-    if not full_audio:
+def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb=None, stop_event=None):
+    global _model
+    if not text.strip():
         return None
-    return np.concatenate(full_audio)
+    try:
+        if status_cb:
+            status_cb("Synthesizing sentence... (takes a moment on CPU)")
+
+        kwargs = {"speed": speed_val}
+        if ref_audio:
+            kwargs["ref_audio"] = ref_audio
+        elif instruct:
+            kwargs["instruct"] = instruct
+
+        print(f"[VoiceCore] Synthesizing: '{text}'")
+        out_list = _model.generate(text=text, **kwargs)
+        if out_list and len(out_list) > 0:
+            return out_list[0]
+    except Exception as e:
+        print(f"[VoiceCore] [Warning] Failed to generate: {e}")
+        traceback.print_exc()
+
+    return None
 
 
 def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, status_cb=None, stop_event=None):

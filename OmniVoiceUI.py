@@ -14,66 +14,12 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 # Import speech synthesis core
 import VoiceCore
 
-DEFAULT_CHUNK_SIZE = 100
 SAMPLE_TEXT = (
     "Greetings Human, I am here to tell you a cat fact. "
     "Did you know that cats sleep for 70% of their lives?"
 )
 
 stop_event = threading.Event()
-
-
-def split_text_into_chunks(words, original_chunk_size, wiggle_room=20):
-    def is_sentence_end(word):
-        return word[-1] in ".!?" if word else False
-
-    chunks = []
-    current_chunk = []
-    word_count = 0
-    i = 0
-
-    while i < len(words):
-        current_chunk.append(words[i])
-        word_count += 1
-        i += 1
-
-        if word_count >= original_chunk_size:
-            if is_sentence_end(words[i - 1]):
-                chunks.append(current_chunk)
-                current_chunk = []
-                word_count = 0
-            else:
-                found = False
-                for j in range(wiggle_room):
-                    if i + j < len(words) and is_sentence_end(words[i + j]):
-                        current_chunk.extend(words[i : i + j + 1])
-                        i += j + 1
-                        found = True
-                        break
-
-                if not found:
-                    for k in range(len(current_chunk) - 1, 0, -1):
-                        if is_sentence_end(current_chunk[k]):
-                            leftover = current_chunk[k + 1 :]
-                            chunks.append(current_chunk[: k + 1])
-                            current_chunk = leftover
-                            word_count = len(leftover)
-                            found = True
-                            break
-
-                if found and word_count != len(current_chunk):
-                    chunks.append(current_chunk)
-                    current_chunk = []
-                    word_count = 0
-                elif not found:
-                    chunks.append(current_chunk)
-                    current_chunk = []
-                    word_count = 0
-
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 
 def combine_output_to_mp3(output_files, output_dir, custom_name="final_output"):
@@ -144,14 +90,13 @@ class OmniVoiceWindow(tk.Tk):
         self.ref_audio_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
         self.voice_var = tk.StringVar(value="female, low pitch, british accent")
-        self.chunk_size_var = tk.IntVar(value=DEFAULT_CHUNK_SIZE)
         self.temp_var = tk.DoubleVar(value=0.7)
         self.speed_var = tk.DoubleVar(value=1.0)
-        self.start_chunk_var = tk.IntVar(value=1)
+        self.start_sentence_var = tk.IntVar(value=1)
         self.combine_mp3_var = tk.BooleanVar(value=True)
         self.mp3_name_var = tk.StringVar(value="final_output")
         self.status_var = tk.StringVar(value="Ready")
-        self.chunk_info_var = tk.StringVar(value="")
+        self.sentence_info_var = tk.StringVar(value="")
         self.device_info_var = tk.StringVar(value="Active Device: Detecting...")
 
         self._configure_theme()
@@ -308,14 +253,11 @@ class OmniVoiceWindow(tk.Tk):
         for col in range(4):
             body.columnconfigure(col, weight=1 if col in (1, 3) else 0)
 
-        # Row 0: Voice Prompt & Chunk Size
+        # Row 0: Voice Prompt
         self.voice_label = ttk.Label(body, text="Voice Prompt:", style="Body.TLabel")
         self.voice_label.grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
         self.voice_entry = ttk.Entry(body, textvariable=self.voice_var)
-        self.voice_entry.grid(row=0, column=1, sticky="ew", pady=5)
-
-        ttk.Label(body, text="Chunk Size (words):", style="Body.TLabel").grid(row=0, column=2, sticky="w", padx=(12, 10), pady=5)
-        ttk.Spinbox(body, from_=10, to=5000, textvariable=self.chunk_size_var, width=10).grid(row=0, column=3, sticky="w", pady=5)
+        self.voice_entry.grid(row=0, column=1, columnspan=3, sticky="ew", pady=5)
 
         # Row 1: Temperature Scale & Speed Scale
         ttk.Label(body, text="Temperature:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
@@ -324,9 +266,9 @@ class OmniVoiceWindow(tk.Tk):
         ttk.Label(body, text="Speed:", style="Body.TLabel").grid(row=1, column=2, sticky="w", padx=(12, 10), pady=5)
         tk.Scale(body, from_=0.5, to=2.0, resolution=0.05, orient="horizontal", variable=self.speed_var, bg="#282c34", fg="#abb2bf", highlightthickness=0, troughcolor="#21252b").grid(row=1, column=3, sticky="ew", pady=5)
 
-        # Row 2: Start Chunk & MP3 Combine settings
-        ttk.Label(body, text="Start Chunk:", style="Body.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=5)
-        ttk.Spinbox(body, from_=1, to=9999, textvariable=self.start_chunk_var, width=10).grid(row=2, column=1, sticky="w", pady=5)
+        # Row 2: Start Sentence & MP3 Combine settings
+        ttk.Label(body, text="Start Sentence:", style="Body.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=5)
+        ttk.Spinbox(body, from_=1, to=9999, textvariable=self.start_sentence_var, width=10).grid(row=2, column=1, sticky="w", pady=5)
 
         mp3_row = ttk.Frame(body, style="Card.TFrame")
         mp3_row.grid(row=2, column=2, columnspan=2, sticky="ew", pady=5)
@@ -339,8 +281,8 @@ class OmniVoiceWindow(tk.Tk):
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
 
-        ttk.Button(body, text="Export Chunk", command=lambda: self.export_chunk(False)).pack(side="left")
-        ttk.Button(body, text="Export All", command=lambda: self.export_chunk(True)).pack(side="left", padx=(8, 0))
+        ttk.Button(body, text="Export Sentence", command=lambda: self.export_sentence(False)).pack(side="left")
+        ttk.Button(body, text="Export All Sentences", command=lambda: self.export_sentence(True)).pack(side="left", padx=(8, 0))
         ttk.Button(body, text="Open Folder", command=self.open_output_folder).pack(side="left", padx=(8, 0))
 
         self.generate_btn = ttk.Button(body, text="Generate Speech", style="Accent.TButton", command=self.start_generation)
@@ -355,7 +297,7 @@ class OmniVoiceWindow(tk.Tk):
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(0, weight=1)
 
-        ttk.Label(body, textvariable=self.chunk_info_var, style="Info.TLabel").grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(body, textvariable=self.sentence_info_var, style="Info.TLabel").grid(row=0, column=0, sticky="ew", pady=(0, 6))
         self.progress_bar = ttk.Progressbar(body, mode="determinate", maximum=1)
         self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(body, textvariable=self.status_var, style="Status.TLabel").grid(row=2, column=0, sticky="ew")
@@ -374,8 +316,8 @@ class OmniVoiceWindow(tk.Tk):
     def _set_status(self, text):
         self._ui(self.status_var.set, text)
 
-    def _set_chunk_info(self, text):
-        self._ui(self.chunk_info_var.set, text)
+    def _set_sentence_info(self, text):
+        self._ui(self.sentence_info_var.set, text)
 
     def _set_progress(self, value, maximum):
         self._ui(self.progress_bar.configure, maximum=max(maximum, 1), value=value)
@@ -464,29 +406,27 @@ class OmniVoiceWindow(tk.Tk):
 
         threading.Thread(target=task, daemon=True).start()
 
-    def export_chunk(self, all_chunks=False):
+    def export_sentence(self, all_sentences=False):
         try:
             full_text = self._get_text().strip()
-            words = full_text.split()
-            chunk_size = self.chunk_size_var.get()
-            chunks = split_text_into_chunks(words, chunk_size)
+            sentences = VoiceCore.split_into_sentences(full_text)
 
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            if all_chunks:
-                for index, chunk in enumerate(chunks, start=1):
-                    path = os.path.join(script_dir, f"chunk_{index}.txt")
+            if all_sentences:
+                for index, sentence in enumerate(sentences, start=1):
+                    path = os.path.join(script_dir, f"sentence_{index}.txt")
                     with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(" ".join(chunk))
-                self.status_var.set(f"All {len(chunks)} chunks exported.")
+                        handle.write(sentence)
+                self.status_var.set(f"All {len(sentences)} sentences exported.")
             else:
-                chunk_id = self.start_chunk_var.get()
-                if 1 <= chunk_id <= len(chunks):
-                    path = os.path.join(script_dir, f"chunk_{chunk_id}.txt")
+                sentence_id = self.start_sentence_var.get()
+                if 1 <= sentence_id <= len(sentences):
+                    path = os.path.join(script_dir, f"sentence_{sentence_id}.txt")
                     with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(" ".join(chunks[chunk_id - 1]))
-                    self.status_var.set(f"Chunk {chunk_id} exported.")
+                        handle.write(sentences[sentence_id - 1])
+                    self.status_var.set(f"Sentence {sentence_id} exported.")
                 else:
-                    self.status_var.set("Invalid chunk ID.")
+                    self.status_var.set("Invalid sentence ID.")
         except Exception as exc:
             self.status_var.set(f"Export error: {exc}")
 
@@ -507,7 +447,7 @@ class OmniVoiceWindow(tk.Tk):
 
     def stop_generation(self):
         stop_event.set()
-        self.status_var.set("Stopping after current chunk...")
+        self.status_var.set("Stopping after current sentence...")
 
     def _generate_speech(self):
         try:
@@ -532,14 +472,14 @@ class OmniVoiceWindow(tk.Tk):
                 self._set_status("No text found to synthesize.")
                 return
 
-            all_chunks = split_text_into_chunks(full_text.split(), self.chunk_size_var.get())
-            start_chunk_idx = self.start_chunk_var.get() - 1
-            if start_chunk_idx < 0 or start_chunk_idx >= len(all_chunks):
-                self._set_status("Invalid start chunk.")
+            all_sentences = VoiceCore.split_into_sentences(full_text)
+            start_sentence_idx = self.start_sentence_var.get() - 1
+            if start_sentence_idx < 0 or start_sentence_idx >= len(all_sentences):
+                self._set_status("Invalid start sentence.")
                 return
 
-            total_chunks = len(all_chunks[start_chunk_idx:])
-            self._set_progress(0, len(all_chunks))
+            total_sentences = len(all_sentences[start_sentence_idx:])
+            self._set_progress(0, len(all_sentences))
             speed_val = float(self.speed_var.get())
             times = []
             output_files = []
@@ -547,26 +487,25 @@ class OmniVoiceWindow(tk.Tk):
             total_words_generated = 0
             total_time_elapsed = 0.0
 
-            for idx, chunk in enumerate(all_chunks[start_chunk_idx:], start=start_chunk_idx):
+            for idx, sentence in enumerate(all_sentences[start_sentence_idx:], start=start_sentence_idx):
                 if stop_event.is_set():
                     self._set_status(f"Stopped. Saved {len(output_files)} files so far.")
                     break
 
                 started = time.time()
-                chunk_text = " ".join(chunk)
-                chunk_word_count = len(chunk)
+                sentence_word_count = len(sentence.split())
 
                 if times:
                     avg_time = (sum(times) / len(times)) / 60.0
-                    remaining_chunks = total_chunks - (idx - start_chunk_idx + 1)
-                    remaining_time = avg_time * remaining_chunks
+                    remaining_sentences = total_sentences - (idx - start_sentence_idx + 1)
+                    remaining_time = avg_time * remaining_sentences
                     wps = total_words_generated / total_time_elapsed if total_time_elapsed > 0 else 0.0
-                    info = f"Processing chunk {idx + 1}/{len(all_chunks)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
+                    info = f"Processing sentence {idx + 1}/{len(all_sentences)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
                 else:
-                    info = f"Processing chunk {idx + 1}/{len(all_chunks)}"
+                    info = f"Processing sentence {idx + 1}/{len(all_sentences)}"
 
-                self._set_chunk_info(info)
-                self._set_status(f"Generating chunk {idx + 1}...")
+                self._set_sentence_info(info)
+                self._set_status(f"Generating sentence {idx + 1}...")
 
                 out_path = os.path.join(output_directory, f"output_{idx + 1}.wav")
                 success = False
@@ -575,7 +514,7 @@ class OmniVoiceWindow(tk.Tk):
                         break
                     try:
                         VoiceCore.synthesize_audio(
-                            chunk_text,
+                            sentence,
                             out_path,
                             voice=voice_name,
                             ref_audio_path=ref_path,
@@ -585,10 +524,10 @@ class OmniVoiceWindow(tk.Tk):
                         )
                         success = True
                         break
-                    except Exception as chunk_error:
-                        print(f"[Chunk {idx + 1}] Attempt {attempt} failed: {chunk_error}")
+                    except Exception as sentence_error:
+                        print(f"[Sentence {idx + 1}] Attempt {attempt} failed: {sentence_error}")
                         if attempt >= 3:
-                            print(f"[Chunk {idx + 1}] Skipping.")
+                            print(f"[Sentence {idx + 1}] Skipping.")
                             break
                         time.sleep(1)
 
@@ -604,14 +543,14 @@ class OmniVoiceWindow(tk.Tk):
                     continue
 
                 output_files.append(out_path)
-                self._set_progress(idx + 1, len(all_chunks))
+                self._set_progress(idx + 1, len(all_sentences))
                 elapsed = time.time() - started
                 times.append(elapsed)
 
-                total_words_generated += chunk_word_count
+                total_words_generated += sentence_word_count
                 total_time_elapsed += elapsed
 
-                print(f"[Chunk {idx + 1}] Done in {elapsed:.2f}s")
+                print(f"[Sentence {idx + 1}] Done in {elapsed:.2f}s")
                 gc.collect()
 
             if not stop_event.is_set():
