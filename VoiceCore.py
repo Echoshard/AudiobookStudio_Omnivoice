@@ -116,6 +116,13 @@ def prepare_ref_audio(ref_audio_path):
 
 
 def split_into_sentences(text):
+    # Normalize line breaks: replace single newlines inside paragraphs with spaces,
+    # while preserving double newlines (paragraph boundaries) as distinct breaks.
+    text = text.replace("\r\n", "\n")
+    text = re.sub(r"\n\n+", "<PARA>", text)
+    text = text.replace("\n", " ")
+    text = text.replace("<PARA>", "\n")
+
     # Split by standard punctuation boundaries, keeping delimiters
     raw_parts = re.split(r"([.!?\n]+)", text)
     sentences = []
@@ -171,8 +178,8 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb
     return None
 
 
-def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, status_cb=None, stop_event=None):
-    temp_ref = prepare_ref_audio(ref_audio_path)
+def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, status_cb=None, stop_event=None, prepare_ref=True):
+    temp_ref = prepare_ref_audio(ref_audio_path) if prepare_ref else ref_audio_path
     try:
         instruct = OMNIVOICE_PRESETS.get(voice.lower(), voice) if voice else OMNIVOICE_PRESETS["alba"]
         audio_np = generate_audio(text, ref_audio=temp_ref, instruct=instruct, speed_val=speed, status_cb=status_cb, stop_event=stop_event)
@@ -181,7 +188,7 @@ def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0,
         sf.write(out_path, audio_np, 24000)
         return True
     finally:
-        if temp_ref and os.path.exists(temp_ref):
+        if prepare_ref and temp_ref and os.path.exists(temp_ref):
             try:
                 os.remove(temp_ref)
             except OSError:

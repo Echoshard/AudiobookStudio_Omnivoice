@@ -113,10 +113,10 @@ class OmniVoiceWindow(tk.Tk):
         if hasattr(self, "voice_entry") and hasattr(self, "voice_label"):
             if self.ref_audio_var.get().strip():
                 self.voice_entry.configure(state="disabled")
-                self.voice_label.state(["disabled"])
+                self.voice_label.configure(style="DisabledBody.TLabel")
             else:
                 self.voice_entry.configure(state="normal")
-                self.voice_label.state(["!disabled"])
+                self.voice_label.configure(style="Body.TLabel")
 
     def _detect_device_at_startup(self):
         try:
@@ -141,7 +141,10 @@ class OmniVoiceWindow(tk.Tk):
         style.map("CardTitle.TLabel", foreground=[("!disabled", "#61afef")])
         
         style.configure("Body.TLabel", background="#282c34", foreground="#edf2f7")
-        style.map("Body.TLabel", foreground=[("disabled", "#5c6370"), ("!disabled", "#edf2f7")])
+        style.map("Body.TLabel", foreground=[("!disabled", "#edf2f7")])
+        
+        style.configure("DisabledBody.TLabel", background="#282c34", foreground="#5c6370")
+        style.map("DisabledBody.TLabel", foreground=[("!disabled", "#5c6370")])
         
         style.configure("Info.TLabel", background="#282c34", foreground="#abb2bf")
         style.map("Info.TLabel", foreground=[("!disabled", "#abb2bf")])
@@ -465,17 +468,28 @@ class OmniVoiceWindow(tk.Tk):
                 return
 
             ref_path = self.ref_audio_var.get().strip()
+            prepared_ref_path = VoiceCore.prepare_ref_audio(ref_path) if ref_path else None
             voice_name = self.voice_var.get().strip()
 
             full_text = self._get_text().strip()
             if not full_text:
                 self._set_status("No text found to synthesize.")
+                if prepared_ref_path and os.path.exists(prepared_ref_path):
+                    try:
+                        os.remove(prepared_ref_path)
+                    except OSError:
+                        pass
                 return
 
             all_sentences = VoiceCore.split_into_sentences(full_text)
             start_sentence_idx = self.start_sentence_var.get() - 1
             if start_sentence_idx < 0 or start_sentence_idx >= len(all_sentences):
                 self._set_status("Invalid start sentence.")
+                if prepared_ref_path and os.path.exists(prepared_ref_path):
+                    try:
+                        os.remove(prepared_ref_path)
+                    except OSError:
+                        pass
                 return
 
             total_sentences = len(all_sentences[start_sentence_idx:])
@@ -517,10 +531,11 @@ class OmniVoiceWindow(tk.Tk):
                             sentence,
                             out_path,
                             voice=voice_name,
-                            ref_audio_path=ref_path,
+                            ref_audio_path=prepared_ref_path,
                             speed=speed_val,
                             status_cb=self._set_status,
-                            stop_event=stop_event
+                            stop_event=stop_event,
+                            prepare_ref=False
                         )
                         success = True
                         break
@@ -569,6 +584,11 @@ class OmniVoiceWindow(tk.Tk):
             traceback.print_exc()
             self._set_status(f"An error occurred: {exc}")
         finally:
+            if prepared_ref_path and os.path.exists(prepared_ref_path):
+                try:
+                    os.remove(prepared_ref_path)
+                except OSError:
+                    pass
             self._set_generate_enabled(True)
 
     def generate_quick_sample(self):
