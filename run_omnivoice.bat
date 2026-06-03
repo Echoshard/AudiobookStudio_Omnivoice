@@ -1,7 +1,23 @@
 @echo off
 cd /d "%~dp0"
+
+REM Editable GPU install knobs:
+REM   auto    = choose from nvidia-smi driver CUDA version
+REM   cu130   = current stable target for CUDA 13.x / newer Blackwell GPUs
+REM   cu128   = target for CUDA 12.8+ GPUs
+REM   cu126   = target for CUDA 12.6+ GPUs
+REM   cpu     = force CPU-only PyTorch
+set "TORCH_CUDA_WHEEL=auto"
+set "TORCH_PACKAGES=torch torchaudio"
+
 set "HF_HOME=%~dp0models"
 set "PATH=%~dp0ffmpeg;%PATH%"
+if not exist "%TEMP%" mkdir "%TEMP%" 2>nul
+if not exist "%TEMP%" (
+    set "TEMP=%~dp0.tmp"
+    set "TMP=%~dp0.tmp"
+    if not exist "%TEMP%" mkdir "%TEMP%" 2>nul
+)
 
 if not exist .venv (
     echo [System] Creating Python virtual environment...

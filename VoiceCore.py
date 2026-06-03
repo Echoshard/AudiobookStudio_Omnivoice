@@ -153,7 +153,7 @@ def split_into_sentences(text):
     return final_sentences
 
 
-def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb=None, stop_event=None):
+def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, num_step=32, status_cb=None, stop_event=None):
     global _model
     if not text.strip():
         return None
@@ -161,7 +161,7 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb
         if status_cb:
             status_cb("Synthesizing sentence... (takes a moment on CPU)")
 
-        kwargs = {"speed": speed_val}
+        kwargs = {"speed": speed_val, "num_step": num_step}
         if ref_audio:
             kwargs["ref_audio"] = ref_audio
         elif instruct:
@@ -178,11 +178,11 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, status_cb
     return None
 
 
-def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, status_cb=None, stop_event=None, prepare_ref=True):
+def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, num_step=32, status_cb=None, stop_event=None, prepare_ref=True):
     temp_ref = prepare_ref_audio(ref_audio_path) if prepare_ref else ref_audio_path
     try:
         instruct = OMNIVOICE_PRESETS.get(voice.lower(), voice) if voice else OMNIVOICE_PRESETS["alba"]
-        audio_np = generate_audio(text, ref_audio=temp_ref, instruct=instruct, speed_val=speed, status_cb=status_cb, stop_event=stop_event)
+        audio_np = generate_audio(text, ref_audio=temp_ref, instruct=instruct, speed_val=speed, num_step=num_step, status_cb=status_cb, stop_event=stop_event)
         if audio_np is None:
             raise RuntimeError("OmniVoice returned empty audio.")
         sf.write(out_path, audio_np, 24000)

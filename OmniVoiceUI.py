@@ -15,9 +15,28 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import VoiceCore
 
 SAMPLE_TEXT = (
-    "Greetings Human, I am here to tell you a cat fact. "
     "Did you know that cats sleep for 70% of their lives?"
 )
+
+VOICE_DESIGN_OPTIONS = {
+    "Gender": ["", "female", "male"],
+    "Age": ["", "child", "teenager", "young adult", "middle-aged", "elderly"],
+    "Pitch": ["", "very low pitch", "low pitch", "moderate pitch", "high pitch", "very high pitch"],
+    "Style": ["", "whisper"],
+    "Accent": [
+        "",
+        "american accent",
+        "british accent",
+        "australian accent",
+        "canadian accent",
+        "indian accent",
+        "chinese accent",
+        "korean accent",
+        "japanese accent",
+        "portuguese accent",
+        "russian accent",
+    ],
+}
 
 stop_event = threading.Event()
 
@@ -83,16 +102,22 @@ class OmniVoiceWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniVoice Audiobook Studio")
-        self.geometry("820x980")
-        self.minsize(850, 780)
+        self.geometry("1080x720")
+        self.minsize(980, 420)
         self.configure(bg="#1e222b")
 
         self.ref_audio_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
-        self.voice_var = tk.StringVar(value="female, low pitch, british accent")
+        self.voice_gender_var = tk.StringVar(value="male")
+        self.voice_age_var = tk.StringVar(value="middle-aged")
+        self.voice_pitch_var = tk.StringVar(value="moderate pitch")
+        self.voice_style_var = tk.StringVar(value="")
+        self.voice_accent_var = tk.StringVar(value="american accent")
+        self.voice_var = tk.StringVar()
         self.temp_var = tk.DoubleVar(value=0.7)
         self.speed_var = tk.DoubleVar(value=1.0)
-        self.start_sentence_var = tk.IntVar(value=1)
+        self.steps_var = tk.IntVar(value=32)
+        self.overwrite_existing_var = tk.BooleanVar(value=False)
         self.combine_mp3_var = tk.BooleanVar(value=True)
         self.mp3_name_var = tk.StringVar(value="final_output")
         self.status_var = tk.StringVar(value="Ready")
@@ -101,22 +126,43 @@ class OmniVoiceWindow(tk.Tk):
 
         self._configure_theme()
         self._build_layout()
+        self._update_voice_prompt()
 
         # Trace reference audio selection to toggle voice entry field
         self.ref_audio_var.trace_add("write", self._on_ref_audio_changed)
+        for var in (
+            self.voice_gender_var,
+            self.voice_age_var,
+            self.voice_pitch_var,
+            self.voice_style_var,
+            self.voice_accent_var,
+        ):
+            var.trace_add("write", self._update_voice_prompt)
         self._on_ref_audio_changed()
 
         # Start device detection in a background thread to keep launch instant
         threading.Thread(target=self._detect_device_at_startup, daemon=True).start()
 
     def _on_ref_audio_changed(self, *args):
-        if hasattr(self, "voice_entry") and hasattr(self, "voice_label"):
+        if hasattr(self, "voice_widgets") and hasattr(self, "voice_label"):
             if self.ref_audio_var.get().strip():
-                self.voice_entry.configure(state="disabled")
+                for widget in self.voice_widgets:
+                    widget.configure(state="disabled")
                 self.voice_label.configure(style="DisabledBody.TLabel")
             else:
-                self.voice_entry.configure(state="normal")
+                for widget in self.voice_widgets:
+                    widget.configure(state="readonly")
                 self.voice_label.configure(style="Body.TLabel")
+
+    def _update_voice_prompt(self, *args):
+        parts = [
+            self.voice_gender_var.get(),
+            self.voice_age_var.get(),
+            self.voice_pitch_var.get(),
+            self.voice_style_var.get(),
+            self.voice_accent_var.get(),
+        ]
+        self.voice_var.set(", ".join(part for part in parts if part))
 
     def _detect_device_at_startup(self):
         try:
@@ -183,14 +229,20 @@ class OmniVoiceWindow(tk.Tk):
 
         content = ttk.Frame(root, style="Root.TFrame")
         content.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        content.columnconfigure(0, weight=1)
-        content.rowconfigure(1, weight=1)
+        content.columnconfigure(0, weight=0, minsize=520)
+        content.columnconfigure(1, weight=1)
+        content.rowconfigure(0, weight=1)
 
-        self._build_inputs_card(content).grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        self._build_text_card(content).grid(row=1, column=0, sticky="nsew", pady=(0, 12))
-        self._build_settings_card(content).grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        self._build_actions_card(content).grid(row=3, column=0, sticky="ew", pady=(0, 12))
-        self._build_progress_card(content).grid(row=4, column=0, sticky="ew")
+        left = ttk.Frame(content, style="Root.TFrame")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+
+        self._build_inputs_card(left).grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        self._build_settings_card(left).grid(row=1, column=0, sticky="nsew", pady=(0, 12))
+        self._build_actions_card(left).grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        self._build_progress_card(left).grid(row=3, column=0, sticky="ew")
+        self._build_text_card(content).grid(row=0, column=1, sticky="nsew")
 
     def _card(self, parent, title):
         frame = ttk.Frame(parent, style="Card.TFrame", padding=14)
@@ -247,36 +299,73 @@ class OmniVoiceWindow(tk.Tk):
 
     def _build_settings_card(self, parent):
         frame = self._card(parent, "Settings")
-        
-        # Subtitle hint explaining custom voice prompts vs ref audio cloning
-        ttk.Label(frame, text="Type a custom voice prompt (e.g. 'deep warm male, slow pace') - only used if no Ref Audio is provided", style="Info.TLabel", font=("Segoe UI", 9, "italic")).grid(row=1, column=0, sticky="w", pady=(0, 8))
-        
+        frame.rowconfigure(2, weight=1)
+
         body = ttk.Frame(frame, style="Card.TFrame")
-        body.grid(row=2, column=0, sticky="ew")
-        for col in range(4):
-            body.columnconfigure(col, weight=1 if col in (1, 3) else 0)
+        body.grid(row=1, column=0, sticky="nsew")
+        for col in range(3):
+            body.columnconfigure(col, weight=1, uniform="settings")
 
-        # Row 0: Voice Prompt
-        self.voice_label = ttk.Label(body, text="Voice Prompt:", style="Body.TLabel")
-        self.voice_label.grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
-        self.voice_entry = ttk.Entry(body, textvariable=self.voice_var)
-        self.voice_entry.grid(row=0, column=1, columnspan=3, sticky="ew", pady=5)
+        voice_frame = ttk.Frame(body, style="Card.TFrame")
+        voice_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        for col in range(3):
+            voice_frame.columnconfigure(col, weight=1, uniform="voice")
 
-        # Row 1: Temperature Scale & Speed Scale
-        ttk.Label(body, text="Temperature:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
-        tk.Scale(body, from_=0.1, to=2.0, resolution=0.1, orient="horizontal", variable=self.temp_var, bg="#282c34", fg="#abb2bf", highlightthickness=0, troughcolor="#21252b").grid(row=1, column=1, sticky="ew", pady=5)
+        self.voice_label = ttk.Label(voice_frame, text="Voice Design", style="Body.TLabel")
+        self.voice_label.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        self.voice_widgets = []
+        fields = [
+            ("Gender", self.voice_gender_var),
+            ("Age", self.voice_age_var),
+            ("Pitch", self.voice_pitch_var),
+            ("Style", self.voice_style_var),
+            ("Accent", self.voice_accent_var),
+        ]
+        for index, (label, variable) in enumerate(fields):
+            field = ttk.Frame(voice_frame, style="Card.TFrame")
+            field.grid(row=(index // 3) + 1, column=index % 3, sticky="ew", padx=(0 if index % 3 == 0 else 8, 0), pady=(0, 6))
+            field.columnconfigure(1, weight=1)
+            ttk.Label(field, text=label, style="Info.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
+            combo = ttk.Combobox(field, textvariable=variable, values=VOICE_DESIGN_OPTIONS[label], state="readonly")
+            combo.grid(row=0, column=1, sticky="ew")
+            self.voice_widgets.append(combo)
 
-        ttk.Label(body, text="Speed:", style="Body.TLabel").grid(row=1, column=2, sticky="w", padx=(12, 10), pady=5)
-        tk.Scale(body, from_=0.5, to=2.0, resolution=0.05, orient="horizontal", variable=self.speed_var, bg="#282c34", fg="#abb2bf", highlightthickness=0, troughcolor="#21252b").grid(row=1, column=3, sticky="ew", pady=5)
+        numeric = ttk.Frame(body, style="Card.TFrame")
+        numeric.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        for col in range(3):
+            numeric.columnconfigure(col, weight=1, uniform="numeric")
 
-        # Row 2: Start Sentence & MP3 Combine settings
-        ttk.Label(body, text="Start Sentence:", style="Body.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=5)
-        ttk.Spinbox(body, from_=1, to=9999, textvariable=self.start_sentence_var, width=10).grid(row=2, column=1, sticky="w", pady=5)
+        numeric_fields = [
+            ("Temp", self.temp_var, 0.1, 2.0, 0.1),
+            ("Steps", self.steps_var, 4, 32, 1),
+            ("Speed", self.speed_var, 0.5, 2.0, 0.05),
+        ]
+        for col, (label, variable, min_value, max_value, resolution) in enumerate(numeric_fields):
+            field = ttk.Frame(numeric, style="Card.TFrame")
+            field.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 8, 0))
+            field.columnconfigure(1, weight=1)
+            ttk.Label(field, text=label, style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
+            tk.Scale(
+                field,
+                from_=min_value,
+                to=max_value,
+                resolution=resolution,
+                orient="horizontal",
+                variable=variable,
+                bg="#282c34",
+                fg="#abb2bf",
+                highlightthickness=0,
+                troughcolor="#21252b",
+                length=110,
+            ).grid(row=0, column=1, sticky="ew")
 
-        mp3_row = ttk.Frame(body, style="Card.TFrame")
-        mp3_row.grid(row=2, column=2, columnspan=2, sticky="ew", pady=5)
-        ttk.Checkbutton(mp3_row, text="Combine into MP3", variable=self.combine_mp3_var).pack(side="left")
-        ttk.Entry(mp3_row, textvariable=self.mp3_name_var, width=30).pack(side="left", padx=(10, 0))
+        output = ttk.Frame(body, style="Card.TFrame")
+        output.grid(row=2, column=0, columnspan=3, sticky="ew")
+        output.columnconfigure(3, weight=1)
+        ttk.Checkbutton(output, text="Overwrite WAVs", variable=self.overwrite_existing_var).grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Checkbutton(output, text="Combine MP3", variable=self.combine_mp3_var).grid(row=0, column=1, sticky="w", padx=(0, 10))
+        ttk.Label(output, text="Name", style="Info.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 6))
+        ttk.Entry(output, textvariable=self.mp3_name_var).grid(row=0, column=3, sticky="ew")
         return frame
 
     def _build_actions_card(self, parent):
@@ -412,8 +501,13 @@ class OmniVoiceWindow(tk.Tk):
         try:
             full_text = self._get_text().strip()
             sentences = VoiceCore.split_into_sentences(full_text)
+            if not sentences:
+                self.status_var.set("No sentences to export.")
+                return
 
-            sentence_id = self.start_sentence_var.get()
+            sentence_id = simpledialog.askinteger("Export Sentence", f"Sentence number (1-{len(sentences)}):", parent=self, minvalue=1, maxvalue=len(sentences))
+            if not sentence_id:
+                return
             if 1 <= sentence_id <= len(sentences):
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 path = os.path.join(script_dir, f"sentence_{sentence_id}.txt")
@@ -474,9 +568,8 @@ class OmniVoiceWindow(tk.Tk):
                 return
 
             all_sentences = VoiceCore.split_into_sentences(full_text)
-            start_sentence_idx = self.start_sentence_var.get() - 1
-            if start_sentence_idx < 0 or start_sentence_idx >= len(all_sentences):
-                self._set_status("Invalid start sentence.")
+            if not all_sentences:
+                self._set_status("No sentences found to synthesize.")
                 if prepared_ref_path and os.path.exists(prepared_ref_path):
                     try:
                         os.remove(prepared_ref_path)
@@ -484,26 +577,36 @@ class OmniVoiceWindow(tk.Tk):
                         pass
                 return
 
-            total_sentences = len(all_sentences[start_sentence_idx:])
+            overwrite_existing = self.overwrite_existing_var.get()
             self._set_progress(0, len(all_sentences))
             speed_val = float(self.speed_var.get())
+            steps_val = int(self.steps_var.get())
             times = []
             output_files = []
+            skipped_existing = 0
 
             total_words_generated = 0
             total_time_elapsed = 0.0
 
-            for idx, sentence in enumerate(all_sentences[start_sentence_idx:], start=start_sentence_idx):
+            for idx, sentence in enumerate(all_sentences):
                 if stop_event.is_set():
                     self._set_status(f"Stopped. Saved {len(output_files)} files so far.")
                     break
+
+                out_path = os.path.join(output_directory, f"output_{idx + 1}.wav")
+                if not overwrite_existing and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                    skipped_existing += 1
+                    output_files.append(out_path)
+                    self._set_progress(idx + 1, len(all_sentences))
+                    self._set_sentence_info(f"Skipping existing sentence {idx + 1}/{len(all_sentences)} | Resume skipped: {skipped_existing}")
+                    continue
 
                 started = time.time()
                 sentence_word_count = len(sentence.split())
 
                 if times:
                     avg_time = (sum(times) / len(times)) / 60.0
-                    remaining_sentences = total_sentences - (idx - start_sentence_idx + 1)
+                    remaining_sentences = len(all_sentences) - (idx + 1)
                     remaining_time = avg_time * remaining_sentences
                     wps = total_words_generated / total_time_elapsed if total_time_elapsed > 0 else 0.0
                     info = f"Processing sentence {idx + 1}/{len(all_sentences)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
@@ -513,7 +616,6 @@ class OmniVoiceWindow(tk.Tk):
                 self._set_sentence_info(info)
                 self._set_status(f"Generating sentence {idx + 1}...")
 
-                out_path = os.path.join(output_directory, f"output_{idx + 1}.wav")
                 success = False
                 for attempt in range(1, 4):
                     if stop_event.is_set():
@@ -525,6 +627,7 @@ class OmniVoiceWindow(tk.Tk):
                             voice=voice_name,
                             ref_audio_path=prepared_ref_path,
                             speed=speed_val,
+                            num_step=steps_val,
                             status_cb=self._set_status,
                             stop_event=stop_event,
                             prepare_ref=False
@@ -561,7 +664,7 @@ class OmniVoiceWindow(tk.Tk):
                 gc.collect()
 
             if not stop_event.is_set():
-                self._set_status(f"Done. Saved {len(output_files)} files.")
+                self._set_status(f"Done. Saved {len(output_files)} files. Skipped {skipped_existing} existing.")
 
             if self.combine_mp3_var.get() and output_files:
                 self._set_status("Merging to MP3...")
@@ -599,6 +702,7 @@ class OmniVoiceWindow(tk.Tk):
                 ref_path = self.ref_audio_var.get().strip()
                 voice_name = self.voice_var.get().strip()
                 speed_val = float(self.speed_var.get())
+                steps_val = int(self.steps_var.get())
 
                 VoiceCore.synthesize_audio(
                     SAMPLE_TEXT,
@@ -606,6 +710,7 @@ class OmniVoiceWindow(tk.Tk):
                     voice=voice_name,
                     ref_audio_path=ref_path,
                     speed=speed_val,
+                    num_step=steps_val,
                     status_cb=self._set_status
                 )
 

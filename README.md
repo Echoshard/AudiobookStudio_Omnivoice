@@ -13,14 +13,14 @@ Audiobook Studio loads PDFs, EPUBs, text files, or scrapes web articles directly
 
 ## ✨ Features
 
-- **🗣️ Advanced Voice Design (Natural Prompting)**
-  Synthesize custom voices from scratch simply by describing them. Type natural-language descriptions directly into the voice prompt box (e.g., `deep warm male voice, slow pace, dramatic tone` or `soft whispering voice, young energetic female, clear British accent`).
+- **🗣️ Advanced Voice Design**
+  Synthesize custom voices from dropdown speaker attributes such as gender, age, pitch, whisper style, and English accent. Leave blank any attribute you want the model to infer.
 - **👥 State-of-the-Art Zero-Shot Voice Cloning**
   Mimic any target speaker's voice using a short (3 to 10 seconds) `.wav` or `.mp3` audio sample.
 - **📚 Multi-Format Document Ingestion**
   Import books and articles instantly from PDFs, EPUBs, raw text files, or directly parse the main reading text from any web URL.
 - **⚡ Advanced CUDA & GPU Auto-Detection**
-  The double-click runner batch file automatically detects your NVIDIA GPU drivers, handles CUDA toolkit capability checks, and installs the matching hardware-accelerated PyTorch build (`cu124`, `cu121`, or `cu118`) or an optimized CPU-only PyTorch build to save download bandwidth.
+  The double-click runner batch file automatically detects your NVIDIA GPU drivers, handles CUDA toolkit capability checks, and installs the matching hardware-accelerated PyTorch build (`cu130`, `cu128`, `cu126`, `cu124`, `cu121`, or `cu118`) or an optimized CPU-only PyTorch build to save download bandwidth.
 - **🎯 Intelligent Sentence-Level Generation**
   Processes text directly sentence-by-sentence. Includes an internal 100-word safety limit that automatically breaks extremely long sentences into sub-sentences, keeping memory footprints low, preventing hallucination, and guaranteeing high-quality neural speech prosody.
 - **🔊 Interactive Quick Sampling**
@@ -45,6 +45,12 @@ Audiobook Studio features a completely self-configuring startup system. To insta
    - Install all required libraries (PyMuPDF, EbookLib, BeautifulSoup4, soundfile, omnivoice).
 3. The modern, dark-themed Audiobook Studio desktop UI will launch automatically!
 
+### GPU PyTorch Repair
+
+If you changed GPUs or PyTorch installed as CPU-only, double-click **`reinstall_gpu_torch.bat`**. It removes the current Torch packages, detects the NVIDIA driver again, and reinstalls the best CUDA wheel. CUDA 13.x drivers, including newer Blackwell GPUs, default to the stable `cu130` PyTorch wheel target.
+
+Advanced users can edit `TORCH_CUDA_WHEEL` at the top of either BAT file to force `cu130`, `cu128`, `cu126`, `cu124`, `cu121`, `cu118`, or `cpu`.
+
 ---
 
 ## 🖱️ Controls & Settings Guide
@@ -53,7 +59,7 @@ Audiobook Studio features a completely self-configuring startup system. To insta
 
 | Control | Function |
 | :--- | :--- |
-| **Ref Audio (.wav/.mp3)** | Path to an audio clip for zero-shot voice cloning. Select a 3-10s clip. Leave blank to use Voice Prompts or presets instead. |
+| **Ref Audio (.wav/.mp3)** | Path to an audio clip for zero-shot voice cloning. Select a 3-10s clip. Leave blank to use Voice Design dropdowns instead. |
 | **Output Directory** | Where your audiobook sentence audio files and final compiled MP3 will be saved. Defaults to the repository root. |
 | **Load PDF/Text/EPUB** | Open a file dialog to parse text from local books and documents. |
 | **Scrape from URL** | Enter any web link to download and strip article or chapter content automatically. |
@@ -62,10 +68,11 @@ Audiobook Studio features a completely self-configuring startup system. To insta
 
 | Setting | Range / Options | Description |
 | :--- | :--- | :--- |
-| **Voice Prompt** | Built-in presets or Custom Prompt | Built-in presets (`alba`, `marius`, `javert`, `jean`, `fantine`, `cosette`, `eponine`, `azelma`) or custom description strings. Disabled if a **Ref Audio** file is loaded. |
+| **Voice Design** | Gender, Age, Pitch, Style, Accent | English speaker-attribute dropdowns that compose the OmniVoice `instruct` string. Disabled if a **Ref Audio** file is loaded. |
 | **Temperature** | 0.1 to 2.0 | Controls synthesis creativity. Lower values are more stable; higher values introduce more expression/variability (0.7 recommended). |
 | **Speed** | 0.5x to 2.0x | Model-native playback rate modifier. Modifies speed directly during neural synthesis, preventing robotic pitch shifting. |
-| **Start Sentence** | 1 to 9999 | Select which sentence index to begin generation from (essential for resuming interrupted tasks). |
+| **Steps** | 4 to 32 | Diffusion step count passed to OmniVoice as `num_step`; lower is faster, higher is usually better quality. |
+| **Overwrite Existing WAVs** | Checkbox | When off, generation skips existing `output_N.wav` files so an interrupted book can resume automatically. |
 | **Combine into MP3** | Checkbox + Output name | Automatically merges generated files and packages them into a single high-fidelity MP3. |
 
 ### Action Terminal
@@ -83,9 +90,9 @@ Audiobook Studio features a completely self-configuring startup system. To insta
 
 ## 💡 Professional Narrative Guidelines
 
-1. **Crafting Custom Voices:** Use descriptive, comma-separated tokens in the **Voice Prompt** input. Combining characteristics yields the best results, e.g., `mature voice, deep baritone, slow cadence, crisp podcast narration style`.
+1. **Crafting Custom Voices:** Use the **Voice Design** dropdowns to combine one attribute per category, such as `female, young adult, high pitch, british accent`.
 2. **Optimizing Voice Clones:** For clean, professional voice cloning, use a 5-to-10 second clip. Ensure the clip has high-quality recording conditions, no background music, no noise, and minimal room reverb.
-3. **Resuming Large Books:** If you stop generation, look at the output directory to find the last successfully generated sentence number (e.g. `output_14.wav`). Simply set the **Start Sentence** to `15` to pick up exactly where you left off.
+3. **Resuming Large Books:** Leave **Overwrite Existing WAVs** unchecked. Audiobook Studio scans the output directory, skips completed `output_N.wav` files, and continues with the first missing sentence.
 4. **Internal Word Safety Limit:** If any single sentence exceeds 100 words, Audiobook Studio automatically partitions it into sub-segments of at most 100 words during execution. This guarantees perfect model synthesis and keeps neural operations fully stable.
 
 ---
