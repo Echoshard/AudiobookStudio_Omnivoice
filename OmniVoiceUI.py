@@ -584,12 +584,14 @@ class OmniVoiceWindow(tk.Tk):
             times = []
             output_files = []
             skipped_existing = 0
+            stopped = False
 
             total_words_generated = 0
             total_time_elapsed = 0.0
 
             for idx, sentence in enumerate(all_sentences):
                 if stop_event.is_set():
+                    stopped = True
                     self._set_status(f"Stopped. Saved {len(output_files)} files so far.")
                     break
 
@@ -642,11 +644,11 @@ class OmniVoiceWindow(tk.Tk):
                         time.sleep(1)
 
                 if stop_event.is_set():
-                    if os.path.exists(out_path):
-                        try:
-                            os.remove(out_path)
-                        except OSError:
-                            pass
+                    stopped = True
+                    if success and os.path.exists(out_path):
+                        output_files.append(out_path)
+                        self._set_progress(idx + 1, len(all_sentences))
+                    self._set_status(f"Stopped. Saved {len(output_files)} files so far.")
                     break
 
                 if not success:
@@ -663,10 +665,10 @@ class OmniVoiceWindow(tk.Tk):
                 print(f"[Sentence {idx + 1}] Done in {elapsed:.2f}s")
                 gc.collect()
 
-            if not stop_event.is_set():
+            if not stopped:
                 self._set_status(f"Done. Saved {len(output_files)} files. Skipped {skipped_existing} existing.")
 
-            if self.combine_mp3_var.get() and output_files:
+            if not stopped and self.combine_mp3_var.get() and output_files:
                 self._set_status("Merging to MP3...")
                 custom_name = self.mp3_name_var.get().strip() or "final_output"
                 mp3_path = combine_output_to_mp3(output_files, output_directory, custom_name)
