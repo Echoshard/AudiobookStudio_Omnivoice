@@ -1383,6 +1383,7 @@ class VideoDubberTab(ttk.Frame):
             if full_video_duration == 0.0 and segments:
                 full_video_duration = segments[-1]['end'] + 10.0
 
+            out_extension = os.path.splitext(video_path)[1] or ".mp4"
             crop_start = 0.0
             crop_duration = full_video_duration
             is_preview = self.preview_mode_var.get()
@@ -1417,7 +1418,7 @@ class VideoDubberTab(ttk.Frame):
             temp_files.append(temp_original_audio)
 
             if is_preview:
-                temp_cropped_video = os.path.join(output_dir, "temp_cropped_video.mp4")
+                temp_cropped_video = os.path.join(output_dir, "temp_cropped_video" + out_extension)
                 temp_files.append(temp_cropped_video)
                 
                 cmd_trim = [
@@ -1430,6 +1431,11 @@ class VideoDubberTab(ttk.Frame):
                 ]
                 self._set_status("Extracting sub-section video...")
                 subprocess.run(cmd_trim, capture_output=True, check=True)
+                
+                try:
+                    shutil.copy(temp_cropped_video, os.path.join(output_dir, f"{output_name}_undubbed_subsection{out_extension}"))
+                except Exception as copy_exc:
+                    print(f"[Preview Mode] Failed to save undubbed video copy: {copy_exc}")
                 
                 cmd_audio = [
                     "ffmpeg", "-y",
@@ -1632,8 +1638,10 @@ class VideoDubberTab(ttk.Frame):
             sf.write(temp_final_audio, dubbed_audio, sample_rate)
 
             self._set_status("Combining dubbed audio and video streams...")
-            out_extension = os.path.splitext(video_path)[1] or ".mp4"
-            final_output_video = os.path.join(output_dir, f"{output_name}{out_extension}")
+            if is_preview:
+                final_output_video = os.path.join(output_dir, f"{output_name}_dubbed_subsection{out_extension}")
+            else:
+                final_output_video = os.path.join(output_dir, f"{output_name}{out_extension}")
 
             cmd_combine = [
                 "ffmpeg", "-y",
@@ -1649,8 +1657,11 @@ class VideoDubberTab(ttk.Frame):
             subprocess.run(cmd_combine, capture_output=True, check=True)
 
             self._set_status("Done!")
+            msg = f"Dubbed video successfully exported to:\n{final_output_video}"
+            if is_preview:
+                msg += f"\n\nAlso saved original undubbed subsection video:\n{output_name}_undubbed_subsection{out_extension}"
             self._set_progress_info(f"Dubbing complete!\nSaved to: {os.path.basename(final_output_video)}")
-            messagebox.showinfo("Success", f"Dubbed video successfully exported to:\n{final_output_video}")
+            messagebox.showinfo("Success", msg)
 
         except Exception as e:
             traceback.print_exc()
@@ -1729,7 +1740,10 @@ class OmniVoiceStudioWindow(tk.Tk):
         # Tab notebook styling
         style.configure("TNotebook", background="#0f1115", borderwidth=0)
         style.configure("TNotebook.Tab", background="#181b22", foreground="#8b949e", padding=10, font=("Segoe UI", 10, "bold"))
-        style.map("TNotebook.Tab", background=[("selected", "#4fa6ff")], foreground=[("selected", "#0f1115")])
+        style.map("TNotebook.Tab",
+                  background=[("selected", "#4fa6ff")],
+                  foreground=[("selected", "#0f1115")],
+                  padding=[("selected", 10)])
 
     def _build_layout(self):
         root_frame = ttk.Frame(self, style="Root.TFrame", padding=14)
