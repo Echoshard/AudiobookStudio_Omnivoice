@@ -153,7 +153,24 @@ def split_into_sentences(text):
     return final_sentences
 
 
-def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, num_step=32, status_cb=None, stop_event=None):
+def set_seed(seed):
+    """Seed all RNGs OmniVoice draws from so generation is reproducible.
+
+    OmniVoice has no `seed` argument; its per-sentence voice variation comes
+    from random sampling during decoding. Seeding torch right before each
+    generate() call locks the sampled voice to a fixed, repeatable result.
+    """
+    if seed is None:
+        return
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def generate_audio(text, ref_audio=None, ref_text=None, instruct=None, speed_val=1.0, num_step=32, seed=None, status_cb=None, stop_event=None):
     global _model
     if not text.strip():
         return None
@@ -161,9 +178,15 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, num_step=
         if status_cb:
             status_cb("Synthesizing sentence... (takes a moment on CPU)")
 
+        # Re-seed before every sentence so each sentence gets the same voice.
+        set_seed(seed)
+
         kwargs = {"speed": speed_val, "num_step": num_step}
         if ref_audio:
             kwargs["ref_audio"] = ref_audio
+            # Passing the known transcript avoids loading Whisper ASR for cloning.
+            if ref_text:
+                kwargs["ref_text"] = ref_text
         elif instruct:
             kwargs["instruct"] = instruct
 
@@ -178,11 +201,23 @@ def generate_audio(text, ref_audio=None, instruct=None, speed_val=1.0, num_step=
     return None
 
 
-def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, speed=1.0, num_step=32, status_cb=None, stop_event=None, prepare_ref=True):
+def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, ref_text=None, speed=1.0, num_step=32, seed=None, status_cb=None, stop_event=None, prepare_ref=True):
     temp_ref = prepare_ref_audio(ref_audio_path) if prepare_ref else ref_audio_path
     try:
         instruct = OMNIVOICE_PRESETS.get(voice.lower(), voice) if voice else OMNIVOICE_PRESETS["alba"]
-        audio_np = generate_audio(text, ref_audio=temp_ref, instruct=instruct, speed_val=speed, num_step=num_step, status_cb=status_cb, stop_event=stop_event)
+        # When a reference clip is supplied we are cloning, so the preset instruct
+        # must not be sent (ref_audio + instruct are mutually exclusive modes).
+        audio_np = generate_audio(
+            text,
+            ref_audio=temp_ref,
+            ref_text=ref_text if temp_ref else None,
+            instruct=None if temp_ref else instruct,
+            speed_val=speed,
+            num_step=num_step,
+            seed=seed,
+            status_cb=status_cb,
+            stop_event=stop_event,
+        )
         if audio_np is None:
             raise RuntimeError("OmniVoice returned empty audio.")
         sf.write(out_path, audio_np, 24000)

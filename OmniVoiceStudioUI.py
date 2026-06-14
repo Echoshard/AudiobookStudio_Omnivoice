@@ -1,6 +1,7 @@
 import gc
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -16,7 +17,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import VoiceCore
 
 SAMPLE_TEXT = (
-    "Did you know that cats sleep for 70% of their lives?"
+    "The morning light came through the window as I poured my coffee, checked "
+    "the time, and listened to the rain starting softly outside."
 )
 
 VOICE_DESIGN_OPTIONS = {
@@ -271,6 +273,11 @@ class AudiobookTab(ttk.Frame):
         self.temp_var = tk.DoubleVar(value=0.7)
         self.speed_var = tk.DoubleVar(value=1.0)
         self.steps_var = tk.IntVar(value=32)
+        # Voice auditioning: each Sample is a fresh random voice; "Save Sample"
+        # keeps the last one and uses it as the clone reference for the book.
+        self.last_sample_path = os.path.abspath("quick_sample.wav")
+        self.saved_voice_path = None
+        self._sample_proc = None  # non-Windows sample playback process
         self.overwrite_existing_var = tk.BooleanVar(value=False)
         self.combine_mp3_var = tk.BooleanVar(value=True)
         self.mp3_name_var = tk.StringVar(value="final_output")
@@ -337,7 +344,7 @@ class AudiobookTab(ttk.Frame):
         self._build_controls_card(self).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _build_inputs_card(self, parent):
-        frame = self._card(parent, "📂 Project Directories")
+        frame = self._card(parent, "Project Directories")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(1, weight=1)
@@ -347,16 +354,16 @@ class AudiobookTab(ttk.Frame):
         
         ref_btn_frame = ttk.Frame(body, style="Card.TFrame")
         ref_btn_frame.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="w")
-        ttk.Button(ref_btn_frame, text="📁 Browse", command=self.browse_ref_file).pack(side="left")
-        ttk.Button(ref_btn_frame, text="✂ Clip 30s", command=self.clip_ref_audio).pack(side="left", padx=(4, 0))
+        ttk.Button(ref_btn_frame, text="Browse", command=self.browse_ref_file).pack(side="left")
+        ttk.Button(ref_btn_frame, text="Clip 30s", command=self.clip_ref_audio).pack(side="left", padx=(4, 0))
 
         ttk.Label(body, text="Output Directory:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(body, textvariable=self.output_dir_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Button(body, text="📁 Browse", command=self.browse_output_dir).grid(row=1, column=2, padx=(8, 0), pady=4, sticky="w")
+        ttk.Button(body, text="Browse", command=self.browse_output_dir).grid(row=1, column=2, padx=(8, 0), pady=4, sticky="w")
         return frame
 
     def _build_text_card(self, parent):
-        frame = self._card(parent, "📝 Text Editor")
+        frame = self._card(parent, "Text Editor")
         frame.rowconfigure(1, weight=1)
 
         text_frame = ttk.Frame(frame, style="Card.TFrame")
@@ -368,9 +375,9 @@ class AudiobookTab(ttk.Frame):
             text_frame,
             wrap="word",
             height=5,
-            bg="#21252b",
-            fg="#f0f3f6",
-            insertbackground="#f0f3f6",
+            bg="#2b2b2b",
+            fg="#e6e6e6",
+            insertbackground="#e6e6e6",
             relief="flat",
             padx=10,
             pady=10,
@@ -384,11 +391,11 @@ class AudiobookTab(ttk.Frame):
 
         actions = ttk.Frame(frame, style="Card.TFrame")
         actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(actions, text="📄 Load PDF/Text/EPUB", command=self.load_text).pack(side="left")
+        ttk.Button(actions, text="Load PDF/Text/EPUB", command=self.load_text).pack(side="left")
         return frame
 
     def _build_settings_card(self, parent):
-        frame = self._card(parent, "🗣️ Voice Settings")
+        frame = self._card(parent, "Voice Settings")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
@@ -461,10 +468,10 @@ class AudiobookTab(ttk.Frame):
                 resolution=res,
                 orient="horizontal",
                 variable=variable,
-                bg="#181b22",
-                fg="#f0f3f6",
+                bg="#202020",
+                fg="#e6e6e6",
                 highlightthickness=0,
-                troughcolor="#0f1115",
+                troughcolor="#161616",
                 width=10,
                 length=90
             ).grid(row=0, column=1, sticky="ew")
@@ -484,21 +491,25 @@ class AudiobookTab(ttk.Frame):
 
     def _build_controls_card(self, parent):
         # Combined Actions and Progress card to save massive vertical space
-        frame = self._card(parent, "⚡ Controls & Progress")
+        frame = self._card(parent, "Controls & Progress")
         
-        # Action Buttons
+        # Single action row: Voice Sample group on the left, everything else right
         btns_row = ttk.Frame(frame, style="Card.TFrame")
         btns_row.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        
-        # Utility buttons on the left
-        ttk.Button(btns_row, text="📤 Export", command=self.export_sentence).pack(side="left")
-        ttk.Button(btns_row, text="📂 Open Folder", command=self.open_output_folder).pack(side="left", padx=(6, 0))
-        ttk.Button(btns_row, text="🔊 Sample", style="Sample.TButton", command=self.generate_quick_sample).pack(side="left", padx=(6, 0))
 
-        # Action buttons on the right (Generate on the far right)
-        self.generate_btn = ttk.Button(btns_row, text="▶ Generate", style="Success.TButton", command=self.start_generation)
+        # Voice Sample workflow (audition -> stop -> save) on the left
+        ttk.Label(btns_row, text="Voice Sample", style="Info.TLabel").pack(side="left", padx=(0, 10))
+        ttk.Button(btns_row, text="Sample", style="Sample.TButton", command=self.generate_quick_sample).pack(side="left")
+        ttk.Button(btns_row, text="Stop", style="SampleStop.TButton", command=self.stop_sample).pack(side="left", padx=(6, 0))
+        ttk.Button(btns_row, text="Save Sample", command=self.save_sample).pack(side="left", padx=(6, 0))
+
+        # Action buttons on the right (Generate on the far right). Packed in
+        # reverse so they read left-to-right as: Export, Open Folder, Stop, Generate.
+        self.generate_btn = ttk.Button(btns_row, text="Generate", style="Success.TButton", command=self.start_generation)
         self.generate_btn.pack(side="right", padx=(6, 0))
-        ttk.Button(btns_row, text="⏹ Stop", style="Danger.TButton", command=self.stop_generation).pack(side="right", padx=(6, 0))
+        ttk.Button(btns_row, text="Stop", style="Danger.TButton", command=self.stop_generation).pack(side="right", padx=(6, 0))
+        ttk.Button(btns_row, text="Open Folder", command=self.open_output_folder).pack(side="right", padx=(6, 0))
+        ttk.Button(btns_row, text="Export", command=self.export_sentence).pack(side="right", padx=(6, 0))
 
         # Progress elements
         prog_row = ttk.Frame(frame, style="Card.TFrame")
@@ -682,6 +693,7 @@ class AudiobookTab(ttk.Frame):
         self.status_var.set("Stopping after current sentence...")
 
     def _generate_speech(self):
+        prepared_ref_path = None
         try:
             output_directory = self.output_dir_var.get().strip() or os.path.dirname(os.path.abspath(__file__))
             self._ui(self.output_dir_var.set, output_directory)
@@ -697,13 +709,19 @@ class AudiobookTab(ttk.Frame):
                 return
 
             ref_path = self.ref_audio_var.get().strip()
-            prepared_ref_path = VoiceCore.prepare_ref_audio(ref_path) if ref_path else None
+            is_saved_voice = bool(ref_path) and ref_path == self.saved_voice_path
+            if is_saved_voice:
+                # Saved sample is already 24k mono; keep it full-length so it stays
+                # in sync with its known transcript (SAMPLE_TEXT) for clean cloning.
+                prepared_ref_path = ref_path
+            else:
+                prepared_ref_path = VoiceCore.prepare_ref_audio(ref_path) if ref_path else None
             voice_name = self.voice_var.get().strip()
 
             full_text = self._get_text().strip()
             if not full_text:
                 self._set_status("No text found to synthesize.")
-                if prepared_ref_path and os.path.exists(prepared_ref_path):
+                if prepared_ref_path and prepared_ref_path != ref_path and os.path.exists(prepared_ref_path):
                     try:
                         os.remove(prepared_ref_path)
                     except OSError:
@@ -713,7 +731,7 @@ class AudiobookTab(ttk.Frame):
             all_sentences = VoiceCore.split_into_sentences(full_text)
             if not all_sentences:
                 self._set_status("No sentences found to synthesize.")
-                if prepared_ref_path and os.path.exists(prepared_ref_path):
+                if prepared_ref_path and prepared_ref_path != ref_path and os.path.exists(prepared_ref_path):
                     try:
                         os.remove(prepared_ref_path)
                     except OSError:
@@ -724,6 +742,13 @@ class AudiobookTab(ttk.Frame):
             self._set_progress(0, len(all_sentences))
             speed_val = float(self.speed_var.get())
             steps_val = int(self.steps_var.get())
+
+            # Voice consistency comes from cloning the reference clip. When the
+            # reference is the saved sample we already know its transcript
+            # (SAMPLE_TEXT), so we pass it and skip the Whisper ASR step.
+            clone_ref_path = prepared_ref_path
+            ref_text_val = SAMPLE_TEXT if (ref_path and ref_path == self.saved_voice_path) else None
+
             times = []
             output_files = []
             skipped_existing = 0
@@ -770,7 +795,8 @@ class AudiobookTab(ttk.Frame):
                             sentence,
                             out_path,
                             voice=voice_name,
-                            ref_audio_path=prepared_ref_path,
+                            ref_audio_path=clone_ref_path,
+                            ref_text=ref_text_val,
                             speed=speed_val,
                             num_step=steps_val,
                             status_cb=self._set_status,
@@ -824,7 +850,7 @@ class AudiobookTab(ttk.Frame):
             traceback.print_exc()
             self._set_status(f"An error occurred: {exc}")
         finally:
-            if prepared_ref_path and os.path.exists(prepared_ref_path):
+            if prepared_ref_path and prepared_ref_path != ref_path and os.path.exists(prepared_ref_path):
                 try:
                     os.remove(prepared_ref_path)
                 except OSError:
@@ -832,10 +858,13 @@ class AudiobookTab(ttk.Frame):
             self._set_generate_enabled(True)
 
     def generate_quick_sample(self):
+        # Interrupt any sample still playing so the new one isn't talked over.
+        self._stop_playback()
+
         def task():
-            temp_out = os.path.abspath("quick_sample.wav")
+            temp_out = self.last_sample_path
             try:
-                self._set_status("Generating quick sample...")
+                self._set_status("Auditioning a new random voice...")
                 if not VoiceCore.ensure_model_loaded(
                     status_cb=self._set_status,
                     progress_cb=self._set_progress_mode,
@@ -844,39 +873,73 @@ class AudiobookTab(ttk.Frame):
                     self._set_status("Failed to load model.")
                     return
 
-                ref_path = self.ref_audio_var.get().strip()
                 voice_name = self.voice_var.get().strip()
                 speed_val = float(self.speed_var.get())
                 steps_val = int(self.steps_var.get())
 
+                # Always a fresh random voice so you can audition until you like
+                # one, then click "Save Sample" to lock it in as the clone source.
+                seed = random.randint(0, 2**31 - 1)
                 VoiceCore.synthesize_audio(
                     SAMPLE_TEXT,
                     temp_out,
                     voice=voice_name,
-                    ref_audio_path=ref_path,
                     speed=speed_val,
                     num_step=steps_val,
-                    status_cb=self._set_status
+                    seed=seed,
+                    status_cb=self._set_status,
                 )
 
-                self._set_status("Playing quick sample...")
+                self._set_status("Playing sample... Save Sample to keep it, or Sample again.")
+                # Play asynchronously so the Stop Sample button can interrupt it.
                 if sys.platform == "win32":
                     import winsound
-                    winsound.PlaySound(temp_out, winsound.SND_FILENAME)
+                    winsound.PlaySound(temp_out, winsound.SND_FILENAME | winsound.SND_ASYNC)
                 else:
-                    subprocess.run(["aplay", temp_out], capture_output=True)
-                self._set_status("Quick sample done.")
+                    self._sample_proc = subprocess.Popen(
+                        ["aplay", temp_out],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
             except Exception as exc:
                 traceback.print_exc()
-                self._set_status(f"Quick sample error: {exc}")
-            finally:
-                if os.path.exists(temp_out):
-                    try:
-                        os.remove(temp_out)
-                    except OSError:
-                        pass
+                self._set_status(f"Sample error: {exc}")
 
         threading.Thread(target=task, daemon=True).start()
+
+    def _stop_playback(self):
+        """Silently stop any sample that is currently playing."""
+        try:
+            if sys.platform == "win32":
+                import winsound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            elif self._sample_proc and self._sample_proc.poll() is None:
+                self._sample_proc.terminate()
+        except Exception:
+            pass
+
+    def stop_sample(self):
+        """Stop the currently playing sample preview."""
+        self._stop_playback()
+        self._set_status("Sample playback stopped.")
+
+    def save_sample(self):
+        """Keep the last auditioned sample and set it as the clone reference."""
+        if not os.path.exists(self.last_sample_path):
+            messagebox.showinfo("Save Sample", "Generate a sample first (click 'Sample').")
+            return
+        out_dir = self.output_dir_var.get().strip() or os.path.dirname(os.path.abspath(__file__))
+        saved_path = os.path.join(out_dir, "saved_voice.wav")
+        try:
+            shutil.copyfile(self.last_sample_path, saved_path)
+        except OSError as exc:
+            messagebox.showerror("Save Sample", f"Could not save voice: {exc}")
+            return
+        # Point the reference-audio field at the saved clip; generation will clone
+        # it for every sentence, so the whole book uses this exact voice.
+        self.saved_voice_path = saved_path
+        self.ref_audio_var.set(saved_path)
+        self._set_status(f"Voice saved. The book will now use this voice: {os.path.basename(saved_path)}")
 
 
 
@@ -1026,18 +1089,18 @@ class VideoDubberTab(ttk.Frame):
         self._build_controls_card(self).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _build_inputs_card(self, parent):
-        frame = self._card(parent, "📁 Media & Subtitles Setup")
+        frame = self._card(parent, "Media & Subtitles Setup")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(1, weight=1)
 
         ttk.Label(body, text="Input Video:", style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(body, textvariable=self.video_path_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Button(body, text="📁 Browse", command=self.browse_video_file).grid(row=0, column=2, padx=(8, 0), pady=4)
+        ttk.Button(body, text="Browse", command=self.browse_video_file).grid(row=0, column=2, padx=(8, 0), pady=4)
 
         ttk.Label(body, text="Subtitle (SRT/VTT):", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(body, textvariable=self.subtitle_path_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Button(body, text="📁 Browse", command=self.browse_subtitle_file).grid(row=1, column=2, padx=(8, 0), pady=4)
+        ttk.Button(body, text="Browse", command=self.browse_subtitle_file).grid(row=1, column=2, padx=(8, 0), pady=4)
 
         ttk.Label(body, text="Embedded Subtitles:", style="Body.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
         self.embedded_sub_combo = ttk.Combobox(body, textvariable=self.embedded_sub_var, values=["None (Use external file)"], state="disabled")
@@ -1045,7 +1108,7 @@ class VideoDubberTab(ttk.Frame):
 
         ttk.Label(body, text="Output Directory:", style="Body.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(body, textvariable=self.output_dir_var).grid(row=3, column=1, sticky="ew", pady=4)
-        ttk.Button(body, text="📁 Browse", command=self.browse_output_dir).grid(row=3, column=2, padx=(8, 0), pady=4)
+        ttk.Button(body, text="Browse", command=self.browse_output_dir).grid(row=3, column=2, padx=(8, 0), pady=4)
 
         name_frame = ttk.Frame(body, style="Card.TFrame")
         name_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=4)
@@ -1055,7 +1118,7 @@ class VideoDubberTab(ttk.Frame):
         return frame
 
     def _build_mixing_card(self, parent):
-        frame = self._card(parent, "⚙️ Dubbing & Mixing Options")
+        frame = self._card(parent, "Dubbing & Mixing Options")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(0, weight=1)
@@ -1085,10 +1148,10 @@ class VideoDubberTab(ttk.Frame):
             resolution=0.05,
             orient="horizontal",
             variable=self.ducking_factor_var,
-            bg="#181b22",
-            fg="#f0f3f6",
+            bg="#202020",
+            fg="#e6e6e6",
             highlightthickness=0,
-            troughcolor="#0f1115",
+            troughcolor="#161616",
             label="Volume factor (0.1 = 10%)",
             width=10
         )
@@ -1096,7 +1159,7 @@ class VideoDubberTab(ttk.Frame):
         return frame
 
     def _build_preview_card(self, parent):
-        frame = self._card(parent, "⏱️ Sub-section Testing (Preview Mode)")
+        frame = self._card(parent, "Sub-section Testing (Preview Mode)")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(0, weight=1)
@@ -1125,17 +1188,17 @@ class VideoDubberTab(ttk.Frame):
             resolution=1,
             orient="horizontal",
             variable=self.preview_duration_var,
-            bg="#181b22",
-            fg="#f0f3f6",
+            bg="#202020",
+            fg="#e6e6e6",
             highlightthickness=0,
-            troughcolor="#0f1115",
+            troughcolor="#161616",
             width=10
         )
         self.preview_duration_scale.grid(row=0, column=1, sticky="ew")
         return frame
 
     def _build_voice_card(self, parent):
-        frame = self._card(parent, "🗣️ Voice Settings")
+        frame = self._card(parent, "Voice Settings")
         body = ttk.Frame(frame, style="Card.TFrame")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
@@ -1210,10 +1273,10 @@ class VideoDubberTab(ttk.Frame):
                 resolution=res,
                 orient="horizontal",
                 variable=variable,
-                bg="#181b22",
-                fg="#f0f3f6",
+                bg="#202020",
+                fg="#e6e6e6",
                 highlightthickness=0,
-                troughcolor="#0f1115",
+                troughcolor="#161616",
                 width=10,
                 length=90
             ).grid(row=0, column=1, sticky="ew")
@@ -1222,19 +1285,19 @@ class VideoDubberTab(ttk.Frame):
 
     def _build_controls_card(self, parent):
         # Combined Actions and Progress card to save massive vertical space
-        frame = self._card(parent, "⚡ Controls & Progress")
+        frame = self._card(parent, "Controls & Progress")
         
         # Action Buttons
         btns_row = ttk.Frame(frame, style="Card.TFrame")
         btns_row.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         
         # Utility buttons on the left
-        ttk.Button(btns_row, text="📂 Open Folder", command=self.open_output_folder).pack(side="left")
+        ttk.Button(btns_row, text="Open Folder", command=self.open_output_folder).pack(side="left")
         
         # Action buttons on the right (Start Dubbing on the far right)
-        self.generate_btn = ttk.Button(btns_row, text="▶ Start Dubbing", style="Success.TButton", command=self.start_dubbing)
+        self.generate_btn = ttk.Button(btns_row, text="Start Dubbing", style="Success.TButton", command=self.start_dubbing)
         self.generate_btn.pack(side="right", padx=(6, 0))
-        ttk.Button(btns_row, text="⏹ Stop", style="Danger.TButton", command=self.stop_dubbing).pack(side="right", padx=(6, 0))
+        ttk.Button(btns_row, text="Stop", style="Danger.TButton", command=self.stop_dubbing).pack(side="right", padx=(6, 0))
 
         # Progress elements
         prog_row = ttk.Frame(frame, style="Card.TFrame")
@@ -1683,9 +1746,9 @@ class OmniVoiceStudioWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniVoice Studio")
-        self.geometry("1120x800") # Shrunk height to 800px to fit 1080p scaled screens
+        self.geometry("1120x800") # Starting height; 50px taller for breathing room
         self.minsize(1000, 600)
-        self.configure(bg="#0f1115")
+        self.configure(bg="#161616")
 
         self.device_info_var = tk.StringVar(value="Active Device: Detecting...")
 
@@ -1700,49 +1763,54 @@ class OmniVoiceStudioWindow(tk.Tk):
         style.theme_use("clam")
         
         # Redesigned Dashboard Theme Colors
-        style.configure("Root.TFrame", background="#0f1115")
-        style.configure("Card.TFrame", background="#181b22")
+        style.configure("Root.TFrame", background="#161616")
+        style.configure("Card.TFrame", background="#202020")
         
-        style.configure("Title.TLabel", background="#0f1115", foreground="#4fa6ff", font=("Segoe UI", 18, "bold"))
-        style.configure("Sub.TLabel", background="#0f1115", foreground="#8b949e", font=("Segoe UI", 10))
+        style.configure("Title.TLabel", background="#161616", foreground="#a3e635", font=("Segoe UI", 18, "bold"))
+        style.configure("Sub.TLabel", background="#161616", foreground="#8a8a8a", font=("Segoe UI", 10))
         
         # Sleek accent colored Card Titles
-        style.configure("CardTitle.TLabel", background="#181b22", foreground="#4fa6ff", font=("Segoe UI", 11, "bold"))
+        style.configure("CardTitle.TLabel", background="#202020", foreground="#a3e635", font=("Segoe UI", 11, "bold"))
         
-        style.configure("Body.TLabel", background="#181b22", foreground="#f0f3f6")
-        style.configure("DisabledBody.TLabel", background="#181b22", foreground="#484f58")
-        style.configure("Info.TLabel", background="#181b22", foreground="#8b949e")
-        style.configure("Status.TLabel", background="#181b22", foreground="#34d399", font=("Segoe UI", 11, "bold"))
+        style.configure("Body.TLabel", background="#202020", foreground="#e6e6e6")
+        style.configure("DisabledBody.TLabel", background="#202020", foreground="#555555")
+        style.configure("Info.TLabel", background="#202020", foreground="#8a8a8a")
+        style.configure("Status.TLabel", background="#202020", foreground="#a3e635", font=("Segoe UI", 11, "bold"))
         
-        style.configure("TEntry", fieldbackground="#21252d", foreground="#f0f3f6")
-        style.configure("TCombobox", fieldbackground="#21252d", foreground="#f0f3f6")
-        style.map("TCombobox", fieldbackground=[("readonly", "#21252d")], foreground=[("readonly", "#f0f3f6")])
-        style.configure("TCheckbutton", background="#181b22", foreground="#8b949e")
+        style.configure("TEntry", fieldbackground="#2b2b2b", foreground="#e6e6e6")
+        style.configure("TCombobox", fieldbackground="#2b2b2b", foreground="#e6e6e6")
+        style.map("TCombobox", fieldbackground=[("readonly", "#2b2b2b")], foreground=[("readonly", "#e6e6e6")])
+        style.configure("TCheckbutton", background="#202020", foreground="#8a8a8a")
         
         # Premium Modern Buttons
-        style.configure("TButton", background="#21252d", foreground="#f0f3f6", padding=8, font=("Segoe UI", 10))
-        style.map("TButton", background=[("active", "#2d323e")])
-        
+        # All buttons share padding=(10, 4) so they line up in a row regardless of style.
+        style.configure("TButton", background="#2b2b2b", foreground="#e6e6e6", padding=(10, 4), font=("Segoe UI", 10))
+        style.map("TButton", background=[("active", "#383838")])
+
         # Green success buttons for starts
-        style.configure("Success.TButton", background="#34d399", foreground="#0f1115", padding=9, font=("Segoe UI", 10, "bold"))
-        style.map("Success.TButton", background=[("active", "#5ae3b2")])
+        style.configure("Success.TButton", background="#a3e635", foreground="#161616", padding=(10, 4), font=("Segoe UI", 10, "bold"))
+        style.map("Success.TButton", background=[("active", "#b6ee5c")])
+
+        # Muted red danger buttons for stops
+        style.configure("Danger.TButton", background="#c75d5d", foreground="#e6e6e6", padding=(10, 4), font=("Segoe UI", 10, "bold"))
+        style.map("Danger.TButton", background=[("active", "#d97a7a")])
+
+        # Voice Sample group: muted green + muted red so it reads calmer than the
+        # primary Generate / Stop actions on the right.
+        style.configure("Sample.TButton", background="#7cb342", foreground="#161616", padding=(10, 4), font=("Segoe UI", 10, "bold"))
+        style.map("Sample.TButton", background=[("active", "#8bc34a")])
+
+        style.configure("SampleStop.TButton", background="#b5564f", foreground="#e6e6e6", padding=(10, 4), font=("Segoe UI", 10, "bold"))
+        style.map("SampleStop.TButton", background=[("active", "#c46b64")])
         
-        # Red danger buttons for stops
-        style.configure("Danger.TButton", background="#f87171", foreground="#0f1115", padding=9, font=("Segoe UI", 10, "bold"))
-        style.map("Danger.TButton", background=[("active", "#ffa1a1")])
-        
-        # Orange sample buttons for quick plays
-        style.configure("Sample.TButton", background="#fb923c", foreground="#0f1115", padding=9, font=("Segoe UI", 10, "bold"))
-        style.map("Sample.TButton", background=[("active", "#ffb070")])
-        
-        style.configure("TProgressbar", troughcolor="#0f1115", background="#4fa6ff", bordercolor="#0f1115")
+        style.configure("TProgressbar", troughcolor="#161616", background="#a3e635", bordercolor="#161616")
 
         # Tab notebook styling
-        style.configure("TNotebook", background="#0f1115", borderwidth=0)
-        style.configure("TNotebook.Tab", background="#181b22", foreground="#8b949e", padding=10, font=("Segoe UI", 10, "bold"))
+        style.configure("TNotebook", background="#161616", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#202020", foreground="#8a8a8a", padding=10, font=("Segoe UI", 10, "bold"))
         style.map("TNotebook.Tab",
-                  background=[("selected", "#4fa6ff")],
-                  foreground=[("selected", "#0f1115")],
+                  background=[("selected", "#a3e635")],
+                  foreground=[("selected", "#161616")],
                   padding=[("selected", 10)])
 
     def _build_layout(self):

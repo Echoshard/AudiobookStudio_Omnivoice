@@ -43,6 +43,21 @@ OmniVoice Studio features a completely self-configuring startup system:
 
 ---
 
+## 🎯 Getting One Consistent Voice (Sample → Save → Generate)
+
+The built-in preset voices are *generated*, not fixed recordings — so left alone, the timbre drifts from sentence to sentence. To lock in a single voice for an entire audiobook, use the **audition workflow**:
+
+1. **🔊 Sample** — Plays a short clip in a brand-new **random voice** every time you click it. Adjust the Voice Profile (gender, age, pitch, accent) and Steps first if you want to steer the general character, then keep clicking **Sample** until you hear a voice you like. The small **`⏹`** button beside it stops playback early.
+2. **💾 Save Sample** — When you like the voice you just heard, click this. It saves that exact clip as **`saved_voice.wav`** in your output folder and sets it as the **Reference Audio**.
+3. **▶ Generate** — The book is now produced by *cloning* your saved voice, so every sentence uses the same consistent voice from start to finish.
+
+> [!TIP]
+> - The saved voice lives at `saved_voice.wav` in your output directory. To reuse it later (or in another session), just put that file path in the **Ref Audio** field — no need to re-sample.
+> - Want a different voice? Click **Sample** again to audition new ones, then **Save Sample** to replace the reference.
+> - Bringing your own voice? Skip sampling entirely — load any clip into **Ref Audio** (use **`✂ Clip 30s`** to trim it) and **Generate** clones that instead.
+
+---
+
 ## 🖱️ Settings & Synthesis Options
 
 - **Voice Profile Design**: Customize speaker properties such as gender, age, pitch, whisper style, and accent. Leaving fields blank lets the model infer them naturally.
