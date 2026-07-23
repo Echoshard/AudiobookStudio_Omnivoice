@@ -23,7 +23,7 @@ set "VENV_PYTHON=.venv\Scripts\python.exe"
 
 if not exist "%VENV_PYTHON%" (
     echo [ERROR] Virtual environment not found in .venv!
-    echo Please make sure you run run_omnivoice.bat first to set up the environment.
+    echo Please make sure you run setup.bat first to set up the environment.
     echo.
     pause
     exit /b 1
@@ -63,6 +63,6 @@ echo ============================================================
 echo   SUCCESS: GPU PyTorch Installation Complete!
 echo ============================================================
 echo.
-echo You can now launch run_omnivoice.bat to run Audiobook Studio on your NVIDIA GPU!
+echo You can now launch run_omniStudio.bat to run Audiobook Studio on your NVIDIA GPU!
 echo.
 pause

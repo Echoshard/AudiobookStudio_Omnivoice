@@ -709,6 +709,10 @@ class AudiobookTab(ttk.Frame):
                 return
 
             ref_path = self.ref_audio_var.get().strip()
+            if ref_path and not os.path.exists(ref_path):
+                self._set_status(f"Error: Reference audio file not found: {ref_path}")
+                return
+
             is_saved_voice = bool(ref_path) and ref_path == self.saved_voice_path
             if is_saved_voice:
                 # Saved sample is already 24k mono; keep it full-length so it stays
@@ -864,7 +868,17 @@ class AudiobookTab(ttk.Frame):
         def task():
             temp_out = self.last_sample_path
             try:
-                self._set_status("Auditioning a new random voice...")
+                ref_path = self.ref_audio_var.get().strip()
+                is_saved_voice = bool(ref_path) and ref_path == self.saved_voice_path
+
+                if ref_path:
+                    if not os.path.exists(ref_path):
+                        self._set_status(f"Error: Reference audio file not found: {ref_path}")
+                        return
+                    self._set_status("Generating sample using reference audio...")
+                else:
+                    self._set_status("Auditioning a new random voice...")
+
                 if not VoiceCore.ensure_model_loaded(
                     status_cb=self._set_status,
                     progress_cb=self._set_progress_mode,
@@ -877,20 +891,37 @@ class AudiobookTab(ttk.Frame):
                 speed_val = float(self.speed_var.get())
                 steps_val = int(self.steps_var.get())
 
-                # Always a fresh random voice so you can audition until you like
+                # Always a fresh random voice or a fresh audition of the ref audio so you can audition until you like
                 # one, then click "Save Sample" to lock it in as the clone source.
                 seed = random.randint(0, 2**31 - 1)
-                VoiceCore.synthesize_audio(
-                    SAMPLE_TEXT,
-                    temp_out,
-                    voice=voice_name,
-                    speed=speed_val,
-                    num_step=steps_val,
-                    seed=seed,
-                    status_cb=self._set_status,
-                )
 
-                self._set_status("Playing sample... Save Sample to keep it, or Sample again.")
+                if ref_path:
+                    ref_text_val = SAMPLE_TEXT if is_saved_voice else None
+                    VoiceCore.synthesize_audio(
+                        SAMPLE_TEXT,
+                        temp_out,
+                        voice=voice_name,
+                        ref_audio_path=ref_path,
+                        ref_text=ref_text_val,
+                        speed=speed_val,
+                        num_step=steps_val,
+                        seed=seed,
+                        status_cb=self._set_status,
+                        prepare_ref=not is_saved_voice
+                    )
+                    self._set_status("Playing sample...")
+                else:
+                    VoiceCore.synthesize_audio(
+                        SAMPLE_TEXT,
+                        temp_out,
+                        voice=voice_name,
+                        speed=speed_val,
+                        num_step=steps_val,
+                        seed=seed,
+                        status_cb=self._set_status,
+                    )
+                    self._set_status("Playing sample... Save Sample to keep it, or Sample again.")
+
                 # Play asynchronously so the Stop Sample button can interrupt it.
                 if sys.platform == "win32":
                     import winsound

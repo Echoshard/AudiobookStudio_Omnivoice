@@ -7,4 +7,4 @@ soundfile
 omnivoice
 
 # Note: torch and torchaudio are omitted here because they are dynamically installed 
-# by the batch script (run_omnivoice.bat) based on your system's CUDA GPU capabilities.
+# by the batch script (setup.bat) based on your system's CUDA GPU capabilities.
