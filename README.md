@@ -31,15 +31,16 @@ Dub videos in any target voice using subtitle timelines.
 
 ## 🚀 Setup & Launch
 
-OmniVoice Studio features a simple, isolated environment setup and startup process:
+OmniVoice Studio features a simple, single-click setup and launch process:
 
-1. Double-click **`setup.bat`** to perform the initial setup. This will:
+1. Double-click **`run_omniStudio.bat`** to launch OmniVoice Studio. On first run, it will automatically:
    - Initialize an isolated Python Virtual Environment (`.venv`).
-   - Query your GPU drivers and install the matching CUDA-accelerated (`cu130`, `cu128`, `cu126`, etc.) or optimized CPU-only PyTorch build.
+   - Query your GPU hardware/drivers and install the optimal matching CUDA-accelerated (`cu130`, `cu128`, `cu126`, `cu124`, `cu121`, `cu118`) or CPU-only PyTorch build with automatic fallback.
    - Download and configure isolated **FFmpeg** bin utilities in the project directory.
-   - Install all required libraries (PyMuPDF, EbookLib, BeautifulSoup4, soundfile, numpy, etc.).
-2. Double-click **`run_omniStudio.bat`** to run Audiobook Studio (Note: if you haven't run setup yet, `run_omniStudio.bat` will automatically call `setup.bat` first).
-3. The desktop studio will launch in a dark theme tailored to fit 1080p scaled displays.
+   - Install all required libraries (PyMuPDF, EbookLib, BeautifulSoup4, soundfile, numpy, omnivoice, etc.).
+   - Perform a quick model verification and launch the desktop interface.
+2. If you ever change GPU drivers or want to reconfigure your PyTorch installation, simply run **`reinstall_gpu_torch.bat`**.
+3. The desktop studio will launch in a sleek dark theme tailored for high productivity.
 
 ---
 

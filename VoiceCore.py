@@ -6,6 +6,15 @@ import traceback
 import numpy as np
 import soundfile as sf
 
+if sys.platform.startswith("win"):
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Force HuggingFace directory at script load
 os.environ["HF_HOME"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -22,17 +31,37 @@ except Exception:
 _model = None
 _libs_loaded = False
 
-# Mapped presets for OmniVoice
-OMNIVOICE_PRESETS = {
-    "alba": "female, pleasant voice, clear pronunciation, natural speed",
-    "marius": "male, low pitch, warm voice, deep tone",
-    "javert": "male, deep voice, serious tone, dramatic",
-    "jean": "male, mature voice, expressive, clear speech",
-    "fantine": "female, soft voice, gentle, slow pace",
-    "cosette": "female, young voice, bright, cheerful",
-    "eponine": "female, warm voice, friendly, engaging",
-    "azelma": "female, high pitch, energetic, fast pace",
+VALID_OMNIVOICE_INSTRUCTS = {
+    "american accent", "australian accent", "british accent", "canadian accent",
+    "child", "chinese accent", "elderly", "female", "high pitch", "indian accent",
+    "japanese accent", "korean accent", "low pitch", "male", "middle-aged",
+    "moderate pitch", "portuguese accent", "russian accent", "teenager",
+    "very high pitch", "very low pitch", "whisper", "young adult",
 }
+
+# Mapped presets for OmniVoice (must match valid OmniVoice instruct tags)
+OMNIVOICE_PRESETS = {
+    "alba": "female, american accent, moderate pitch",
+    "marius": "male, american accent, low pitch",
+    "javert": "male, british accent, very low pitch",
+    "jean": "male, american accent, middle-aged",
+    "fantine": "female, whisper, low pitch",
+    "cosette": "female, young adult, high pitch",
+    "eponine": "female, teenager, moderate pitch",
+    "azelma": "female, child, very high pitch",
+}
+
+
+def filter_instruct(instruct_str):
+    """Filters custom instruct strings to ensure only valid OmniVoice tags are passed."""
+    if not instruct_str:
+        return "female, american accent"
+    tokens = [t.strip().lower() for t in str(instruct_str).replace(";", ",").split(",") if t.strip()]
+    valid_tokens = [t for t in tokens if t in VALID_OMNIVOICE_INSTRUCTS]
+    if not valid_tokens:
+        lower = instruct_str.lower()
+        return "female, american accent" if "female" in lower else "male, american accent" if "male" in lower else "female, american accent"
+    return ", ".join(valid_tokens)
 
 def load_libs():
     global _libs_loaded, torch, OmniVoice
@@ -188,7 +217,7 @@ def generate_audio(text, ref_audio=None, ref_text=None, instruct=None, speed_val
             if ref_text:
                 kwargs["ref_text"] = ref_text
         elif instruct:
-            kwargs["instruct"] = instruct
+            kwargs["instruct"] = filter_instruct(instruct)
 
         print(f"[VoiceCore] Synthesizing: '{text}'")
         out_list = _model.generate(text=text, **kwargs)
@@ -204,7 +233,8 @@ def generate_audio(text, ref_audio=None, ref_text=None, instruct=None, speed_val
 def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, ref_text=None, speed=1.0, num_step=32, seed=None, status_cb=None, stop_event=None, prepare_ref=True):
     temp_ref = prepare_ref_audio(ref_audio_path) if prepare_ref else ref_audio_path
     try:
-        instruct = OMNIVOICE_PRESETS.get(voice.lower(), voice) if voice else OMNIVOICE_PRESETS["alba"]
+        raw_instruct = OMNIVOICE_PRESETS.get(voice.lower(), voice) if voice else OMNIVOICE_PRESETS["alba"]
+        instruct = filter_instruct(raw_instruct)
         # When a reference clip is supplied we are cloning, so the preset instruct
         # must not be sent (ref_audio + instruct are mutually exclusive modes).
         audio_np = generate_audio(
