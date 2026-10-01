@@ -273,6 +273,7 @@ class AudiobookTab(ttk.Frame):
         self.temp_var = tk.DoubleVar(value=0.7)
         self.speed_var = tk.DoubleVar(value=1.0)
         self.steps_var = tk.IntVar(value=32)
+        self.chunk_size_var = tk.IntVar(value=3)
         # Voice auditioning: each Sample is a fresh random voice; "Save Sample"
         # keeps the last one and uses it as the clone reference for the book.
         self.last_sample_path = os.path.abspath("quick_sample.wav")
@@ -475,6 +476,31 @@ class AudiobookTab(ttk.Frame):
                 width=10,
                 length=90
             ).grid(row=0, column=1, sticky="ew")
+
+        # Sentences per generation: OmniVoice renders up to ~30s per pass and
+        # splits anything longer into ~15s pieces internally.
+        chunk_row = ttk.Frame(params_frame, style="Card.TFrame", padding=(0, 6, 0, 0))
+        chunk_row.pack(fill="x")
+        chunk_row.columnconfigure(1, weight=1)
+        ttk.Label(chunk_row, text="Sentences / chunk", style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        tk.Scale(
+            chunk_row,
+            from_=1,
+            to=10,
+            resolution=1,
+            orient="horizontal",
+            variable=self.chunk_size_var,
+            bg="#202020",
+            fg="#e6e6e6",
+            highlightthickness=0,
+            troughcolor="#161616",
+            width=10,
+        ).grid(row=0, column=1, sticky="ew")
+        ttk.Label(
+            chunk_row,
+            text="~30s renders in one pass; longer chunks are split at ~15s internally.",
+            style="Info.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w")
 
         # Output options
         output_frame = ttk.Frame(body, style="Card.TFrame", padding=(0, 8, 0, 0))
@@ -742,6 +768,14 @@ class AudiobookTab(ttk.Frame):
                         pass
                 return
 
+            # Generate several sentences per call for smoother, more natural flow.
+            chunk_size = int(self.chunk_size_var.get())
+            all_sentences = VoiceCore.group_sentences(all_sentences, chunk_size)
+            unit = "sentence" if chunk_size == 1 else "chunk"
+            # Different chunk sizes produce different files, so name them apart
+            # to keep "resume" from mixing WAVs made with another chunk size.
+            file_prefix = "output" if chunk_size == 1 else f"output_c{chunk_size}"
+
             overwrite_existing = self.overwrite_existing_var.get()
             self._set_progress(0, len(all_sentences))
             speed_val = float(self.speed_var.get())
@@ -767,12 +801,12 @@ class AudiobookTab(ttk.Frame):
                     self._set_status(f"Stopped. Saved {len(output_files)} files so far.")
                     break
 
-                out_path = os.path.join(output_directory, f"output_{idx + 1}.wav")
+                out_path = os.path.join(output_directory, f"{file_prefix}_{idx + 1}.wav")
                 if not overwrite_existing and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                     skipped_existing += 1
                     output_files.append(out_path)
                     self._set_progress(idx + 1, len(all_sentences))
-                    self._set_sentence_info(f"Skipping existing sentence {idx + 1}/{len(all_sentences)} | Resume skipped: {skipped_existing}")
+                    self._set_sentence_info(f"Skipping existing {unit} {idx + 1}/{len(all_sentences)} | Resume skipped: {skipped_existing}")
                     continue
 
                 started = time.time()
@@ -783,12 +817,12 @@ class AudiobookTab(ttk.Frame):
                     remaining_sentences = len(all_sentences) - (idx + 1)
                     remaining_time = avg_time * remaining_sentences
                     wps = total_words_generated / total_time_elapsed if total_time_elapsed > 0 else 0.0
-                    info = f"Processing sentence {idx + 1}/{len(all_sentences)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
+                    info = f"Processing {unit} {idx + 1}/{len(all_sentences)} | Avg: {avg_time:.2f}m | Est. Remaining: {remaining_time:.2f}m | Speed: {wps:.1f} words/sec"
                 else:
-                    info = f"Processing sentence {idx + 1}/{len(all_sentences)}"
+                    info = f"Processing {unit} {idx + 1}/{len(all_sentences)}"
 
                 self._set_sentence_info(info)
-                self._set_status(f"Generating sentence {idx + 1}...")
+                self._set_status(f"Generating {unit} {idx + 1}...")
 
                 success = False
                 for attempt in range(1, 4):
@@ -810,9 +844,9 @@ class AudiobookTab(ttk.Frame):
                         success = True
                         break
                     except Exception as sentence_error:
-                        print(f"[Sentence {idx + 1}] Attempt {attempt} failed: {sentence_error}")
+                        print(f"[{unit.title()} {idx + 1}] Attempt {attempt} failed: {sentence_error}")
                         if attempt >= 3:
-                            print(f"[Sentence {idx + 1}] Skipping.")
+                            print(f"[{unit.title()} {idx + 1}] Skipping.")
                             break
                         time.sleep(1)
 
@@ -835,7 +869,7 @@ class AudiobookTab(ttk.Frame):
                 total_words_generated += sentence_word_count
                 total_time_elapsed += elapsed
 
-                print(f"[Sentence {idx + 1}] Done in {elapsed:.2f}s")
+                print(f"[{unit.title()} {idx + 1}] Done in {elapsed:.2f}s")
                 gc.collect()
 
             if not stopped:

@@ -122,19 +122,133 @@ def ensure_model_loaded(status_cb=None, progress_cb=None, device_cb=None):
             progress_cb("determinate")
 
 
+# ---------------------------------------------------------------------------
+# Breath / silence fix (see OmniVoiceSlienceFix.md)
+#
+# OmniVoice treats the reference clip as conversational context and tends to
+# synthesize an inhalation breath before the first word. Its built-in silence
+# trimmer uses -50 dB, so the breath (~-25 dB) survives, and it then prepends
+# 100ms of padding. The fix has three parts:
+#   1. Cut the reference clip at a natural pause (not mid-word) + 0.2s silence.
+#   2. Generate with pad_duration=0.0 so no artificial dead air is added.
+#   3. Strip the leading breath from the output and end it with 0.2s silence.
+# ---------------------------------------------------------------------------
+
+SILENCE_PAD_SEC = 0.2
+BREATH_THRESHOLD_DB = -22  # relative to the library's standard -6 dBFS output peak
+BREATH_LEAD_MS = 35        # cushion kept before speech so /s/, /h/, /t/ aren't clipped
+
+
+def _windowed_rms(audio, win_size, hop, start=0, end=None):
+    end = len(audio) if end is None else end
+    starts = range(start, end - win_size, hop)
+    rms = np.array([np.sqrt(np.mean(audio[i : i + win_size] ** 2)) for i in starts])
+    return rms, list(starts)
+
+
+def _trim_trailing_dead_air(audio, sr, keep_sec):
+    """Cut everything after the last window that still contains speech."""
+    win_size = int(sr * 0.05)
+    rms, starts = _windowed_rms(audio, win_size, int(sr * 0.01))
+    if len(rms) == 0:
+        return audio
+    speech = np.where(rms > max(0.005, rms.max() * 0.04))[0]
+    if len(speech) == 0:
+        return audio
+    cut = min(len(audio), starts[speech[-1]] + win_size + int(sr * keep_sec))
+    return audio[:cut].copy()
+
+
+def _fade_out_and_pad(audio, sr, silence_pad_sec=SILENCE_PAD_SEC):
+    """15ms anti-click fade-out, then append clean digital silence."""
+    audio = audio.astype(np.float32, copy=True)
+    fade_len = int(sr * 0.015)
+    if len(audio) > fade_len:
+        audio[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+    return np.concatenate([audio, np.zeros(int(sr * silence_pad_sec), dtype=np.float32)])
+
+
+def cut_reference_at_silence(audio_path, min_sec=4.0, max_sec=10.0, silence_pad_sec=SILENCE_PAD_SEC):
+    """Load a reference clip, cut it at a natural pause, and append 0.2s of silence.
+
+    Returns (mono_float32_audio, sample_rate).
+    """
+    data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
+    mono = data.mean(axis=1)
+
+    if len(mono) <= max_sec * sr:
+        # Short enough already: just drop the trailing dead air after the last word.
+        clip = _trim_trailing_dead_air(mono, sr, keep_sec=0.0)
+    else:
+        # Too long: find the longest pause between min_sec and max_sec and cut there.
+        win_size = int(sr * 0.1)
+        rms, starts = _windowed_rms(mono, win_size, int(sr * 0.02), int(sr * min_sec), int(sr * max_sec))
+        if len(rms) == 0:
+            clip = mono[: int(sr * max_sec)].copy()
+        else:
+            silent = rms < max(0.003, rms.max() * 0.03)
+            best_start, best_len, run_start = -1, 0, -1
+            for idx, is_sil in enumerate(np.append(silent, False)):
+                if is_sil and run_start == -1:
+                    run_start = idx
+                elif not is_sil and run_start != -1:
+                    if idx - run_start > best_len:
+                        best_start, best_len = run_start, idx - run_start
+                    run_start = -1
+            if best_len >= 3:
+                pos = best_start + best_len // 2
+            else:
+                pos = int(np.argmin(rms))  # fall back to the quietest point
+            clip = mono[: starts[pos] + win_size // 2].copy()
+            print(f"[VoiceCore] Cut reference audio at {len(clip) / sr:.2f}s (natural pause).")
+
+    return _fade_out_and_pad(clip, sr, silence_pad_sec), sr
+
+
+def strip_leading_breath(audio_np, sample_rate=24000):
+    """Remove the pre-speech inhalation that OmniVoice tends to generate.
+
+    The -22 dB threshold from the fix guide assumes OmniVoice's standard output
+    level (peak ~0.5 / -6 dBFS). Clone output is scaled to the reference clip's
+    loudness, so the threshold is shifted by the same amount; otherwise quiet
+    voices would have their first word mistaken for breath.
+    """
+    peak = float(np.abs(audio_np).max()) if len(audio_np) else 0.0
+    if peak < 1e-4:
+        return audio_np
+    threshold_db = BREATH_THRESHOLD_DB + (20 * np.log10(peak) + 6.0)
+
+    # Same as pydub's detect_leading_silence (10ms chunks, dBFS of chunk RMS).
+    chunk = int(sample_rate * 0.01)
+    n_chunks = len(audio_np) // chunk
+    rms = np.sqrt(np.mean(audio_np[: n_chunks * chunk].reshape(n_chunks, chunk) ** 2, axis=1))
+    loud = np.where(20 * np.log10(np.maximum(rms, 1e-10)) >= threshold_db)[0]
+    if len(loud) == 0:
+        return audio_np
+    lead_ms = int(loud[0]) * 10
+    if lead_ms > 100:
+        cleaned = audio_np[int((lead_ms - BREATH_LEAD_MS) * sample_rate / 1000):]
+        if len(cleaned) > int(sample_rate * 0.3):
+            print(f"[VoiceCore] Stripped {lead_ms - BREATH_LEAD_MS}ms of leading breath.")
+            return cleaned
+    return audio_np
+
+
+def finalize_omnivoice_output(audio_np, sample_rate=24000, silence_pad_sec=SILENCE_PAD_SEC):
+    """Strip leading breath, trim trailing dead air, fade out, and pad 0.2s of silence."""
+    audio_np = np.asarray(audio_np, dtype=np.float32).squeeze()
+    audio_np = strip_leading_breath(audio_np, sample_rate)
+    audio_np = _trim_trailing_dead_air(audio_np, sample_rate, keep_sec=0.04)
+    return _fade_out_and_pad(audio_np, sample_rate, silence_pad_sec)
+
+
 def prepare_ref_audio(ref_audio_path):
     if not ref_audio_path or not os.path.exists(ref_audio_path):
         return None
     try:
-        data, samplerate = sf.read(ref_audio_path)
-        max_samples = 10 * samplerate
-        if len(data) > max_samples:
-            print(f"[VoiceCore] Truncating reference audio from {len(data)} to {max_samples} samples.")
-            data = data[:max_samples]
-
-        # Convert stereo to mono
-        if len(data.shape) > 1:
-            data = data.mean(axis=1)
+        # Cut at a natural pause (not an arbitrary 10s mark that can land mid-word)
+        # and end with clean silence so the model doesn't "continue" into a breath.
+        data, samplerate = cut_reference_at_silence(ref_audio_path)
 
         temp_file = os.path.abspath("temp_omnivoice_ref.wav")
         sf.write(temp_file, data, samplerate, subtype="PCM_16")
@@ -182,6 +296,17 @@ def split_into_sentences(text):
     return final_sentences
 
 
+def group_sentences(sentences, sentences_per_chunk=1):
+    """Join consecutive sentences into chunks so each generate() call covers more text.
+
+    OmniVoice renders up to ~30s of estimated audio in a single pass; anything
+    longer is split internally at punctuation into ~15s pieces and cross-faded,
+    so large chunks are safe.
+    """
+    n = max(1, int(sentences_per_chunk))
+    return [" ".join(sentences[i : i + n]) for i in range(0, len(sentences), n)]
+
+
 def set_seed(seed):
     """Seed all RNGs OmniVoice draws from so generation is reproducible.
 
@@ -210,7 +335,9 @@ def generate_audio(text, ref_audio=None, ref_text=None, instruct=None, speed_val
         # Re-seed before every sentence so each sentence gets the same voice.
         set_seed(seed)
 
-        kwargs = {"speed": speed_val, "num_step": num_step}
+        # pad_duration=0.0 stops OmniVoice prepending 100ms of dead air before
+        # the breath; finalize_omnivoice_output() adds clean padding instead.
+        kwargs = {"speed": speed_val, "num_step": num_step, "pad_duration": 0.0, "fade_duration": 0.02}
         if ref_audio:
             kwargs["ref_audio"] = ref_audio
             # Passing the known transcript avoids loading Whisper ASR for cloning.
@@ -250,7 +377,9 @@ def synthesize_audio(text, out_path, voice=None, ref_audio_path=None, ref_text=N
         )
         if audio_np is None:
             raise RuntimeError("OmniVoice returned empty audio.")
-        sf.write(out_path, audio_np, 24000)
+        sample_rate = getattr(_model, "sampling_rate", 24000)
+        audio_np = finalize_omnivoice_output(audio_np, sample_rate)
+        sf.write(out_path, audio_np, sample_rate)
         return True
     finally:
         if prepare_ref and temp_ref and os.path.exists(temp_ref):
