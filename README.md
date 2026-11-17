@@ -48,8 +48,8 @@ OmniVoice Studio features a simple, single-click setup and launch process:
 
 The built-in preset voices are *generated*, not fixed recordings — so left alone, the timbre drifts from sentence to sentence. To lock in a single voice for an entire audiobook, use the **audition workflow**:
 
-1. **🔊 Sample** — Plays a short clip in a brand-new **random voice** every time you click it. Adjust the Voice Profile (gender, age, pitch, accent) and Steps first if you want to steer the general character, then keep clicking **Sample** until you hear a voice you like. The small **`⏹`** button beside it stops playback early.
-2. **💾 Save Sample** — When you like the voice you just heard, click this. It saves that exact clip as **`saved_voice.wav`** in your output folder and sets it as the **Reference Audio**.
+1. Select **Generate** in Voice Settings, then click **🔊 Sample** — Plays a short clip in a brand-new **random voice** every time you click it. Adjust the Voice Profile (gender, age, pitch, accent) and Steps first if you want to steer the general character, then keep clicking **Sample** until you hear a voice you like. The small **`⏹`** button beside it stops playback early.
+2. **💾 Save Sample** — When you like the voice you just heard, click this. It saves that exact clip as **`saved_voice.wav`** in your output folder, sets it as the **Reference Audio**, and selects **Clone**.
 3. **▶ Generate** — The book is now produced by *cloning* your saved voice, so every sentence uses the same consistent voice from start to finish.
 
 > [!TIP]
@@ -61,7 +61,7 @@ The built-in preset voices are *generated*, not fixed recordings — so left alo
 
 ## 🖱️ Settings & Synthesis Options
 
-- **Voice Profile Design**: Customize speaker properties such as gender, age, pitch, whisper style, and accent. Leaving fields blank lets the model infer them naturally.
+- **Voice Settings**: **Clone** is selected by default and contains the reference audio field, Browse, and Clip 30s. **Generate** contains four voice design fields: gender, age, pitch, and accent. Leaving fields blank lets the model infer them naturally. Samples and audiobook generation use the selected tab.
 - **Synthesis Parameters**: Adjust temperature (0.1 to 2.0), diffusion step counts (4 to 32), and speed scaling directly.
 - **Full-Width Controls**: A unified controls bar at the bottom spans the screen, featuring utility commands on the left and action buttons (**`Generate`** / **`Start Dubbing`** and **`Stop`**) on the far right.
 

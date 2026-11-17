@@ -25,7 +25,6 @@ VOICE_DESIGN_OPTIONS = {
     "Gender": ["", "female", "male"],
     "Age": ["", "child", "teenager", "young adult", "middle-aged", "elderly"],
     "Pitch": ["", "very low pitch", "low pitch", "moderate pitch", "high pitch", "very high pitch"],
-    "Style": ["", "whisper"],
     "Accent": [
         "",
         "american accent",
@@ -267,7 +266,6 @@ class AudiobookTab(ttk.Frame):
         self.voice_gender_var = tk.StringVar(value="male")
         self.voice_age_var = tk.StringVar(value="middle-aged")
         self.voice_pitch_var = tk.StringVar(value="moderate pitch")
-        self.voice_style_var = tk.StringVar(value="")
         self.voice_accent_var = tk.StringVar(value="american accent")
         self.voice_var = tk.StringVar()
         self.temp_var = tk.DoubleVar(value=0.7)
@@ -289,34 +287,29 @@ class AudiobookTab(ttk.Frame):
         self._update_voice_prompt()
 
         # Traces
-        self.ref_audio_var.trace_add("write", self._on_ref_audio_changed)
         for var in (
             self.voice_gender_var,
             self.voice_age_var,
             self.voice_pitch_var,
-            self.voice_style_var,
             self.voice_accent_var,
         ):
             var.trace_add("write", self._update_voice_prompt)
-        self._on_ref_audio_changed()
 
-    def _on_ref_audio_changed(self, *args):
-        if hasattr(self, "voice_widgets") and hasattr(self, "voice_label"):
-            if self.ref_audio_var.get().strip():
-                for widget in self.voice_widgets:
-                    widget.configure(state="disabled")
-                self.voice_label.configure(style="DisabledBody.TLabel")
-            else:
-                for widget in self.voice_widgets:
-                    widget.configure(state="readonly")
-                self.voice_label.configure(style="Body.TLabel")
+    def _get_reference_audio(self):
+        if self.voice_notebook.select() == str(self.generate_voice_tab):
+            return None
+        path = self.ref_audio_var.get().strip()
+        if not path:
+            raise ValueError("Select reference audio in Clone, or switch to Generate to design a voice.")
+        if not os.path.isfile(path):
+            raise ValueError(f"Reference audio file not found: {path}")
+        return path
 
     def _update_voice_prompt(self, *args):
         parts = [
             self.voice_gender_var.get(),
             self.voice_age_var.get(),
             self.voice_pitch_var.get(),
-            self.voice_style_var.get(),
             self.voice_accent_var.get(),
         ]
         self.voice_var.set(", ".join(part for part in parts if part))
@@ -350,17 +343,9 @@ class AudiobookTab(ttk.Frame):
         body.grid(row=1, column=0, sticky="ew")
         body.columnconfigure(1, weight=1)
 
-        ttk.Label(body, text="Ref Audio (.wav/.mp3):", style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(body, textvariable=self.ref_audio_var).grid(row=0, column=1, sticky="ew", pady=4)
-        
-        ref_btn_frame = ttk.Frame(body, style="Card.TFrame")
-        ref_btn_frame.grid(row=0, column=2, padx=(8, 0), pady=4, sticky="w")
-        ttk.Button(ref_btn_frame, text="Browse", command=self.browse_ref_file).pack(side="left")
-        ttk.Button(ref_btn_frame, text="Clip 30s", command=self.clip_ref_audio).pack(side="left", padx=(4, 0))
-
-        ttk.Label(body, text="Output Directory:", style="Body.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(body, textvariable=self.output_dir_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Button(body, text="Browse", command=self.browse_output_dir).grid(row=1, column=2, padx=(8, 0), pady=4, sticky="w")
+        ttk.Label(body, text="Output Directory:", style="Body.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(body, textvariable=self.output_dir_var).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Button(body, text="Browse", command=self.browse_output_dir).grid(row=0, column=2, padx=(8, 0), pady=4, sticky="w")
         return frame
 
     def _build_text_card(self, parent):
@@ -401,9 +386,25 @@ class AudiobookTab(ttk.Frame):
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
 
-        # Voice Profile Design section
-        profile_frame = ttk.Frame(body, style="Card.TFrame", padding=(0, 0, 0, 8))
-        profile_frame.pack(fill="x", expand=True)
+        self.voice_notebook = ttk.Notebook(body, style="Voice.TNotebook")
+        self.voice_notebook.pack(fill="x", pady=(0, 8))
+        self.clone_voice_tab = ttk.Frame(self.voice_notebook, style="Card.TFrame", padding=10)
+        self.generate_voice_tab = ttk.Frame(self.voice_notebook, style="Card.TFrame", padding=10)
+        self.voice_notebook.add(self.clone_voice_tab, text="Clone")
+        self.voice_notebook.add(self.generate_voice_tab, text="Generate")
+        self.voice_notebook.select(self.clone_voice_tab)
+
+        self.clone_voice_tab.columnconfigure(0, weight=1)
+        ttk.Label(self.clone_voice_tab, text="Reference audio (.wav/.mp3)", style="Body.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 6)
+        )
+        ttk.Entry(self.clone_voice_tab, textvariable=self.ref_audio_var).grid(row=1, column=0, sticky="ew")
+        ref_buttons = ttk.Frame(self.clone_voice_tab, style="Card.TFrame")
+        ref_buttons.grid(row=1, column=1, padx=(8, 0))
+        ttk.Button(ref_buttons, text="Browse", command=self.browse_ref_file).pack(side="left")
+        ttk.Button(ref_buttons, text="Clip 30s", command=self.clip_ref_audio).pack(side="left", padx=(4, 0))
+
+        profile_frame = self.generate_voice_tab
         profile_frame.columnconfigure(0, weight=1)
         profile_frame.columnconfigure(1, weight=1)
 
@@ -413,11 +414,10 @@ class AudiobookTab(ttk.Frame):
         fields_left = [
             ("Gender", self.voice_gender_var, VOICE_DESIGN_OPTIONS["Gender"]),
             ("Pitch", self.voice_pitch_var, VOICE_DESIGN_OPTIONS["Pitch"]),
-            ("Accent", self.voice_accent_var, VOICE_DESIGN_OPTIONS["Accent"]),
         ]
         fields_right = [
             ("Age", self.voice_age_var, VOICE_DESIGN_OPTIONS["Age"]),
-            ("Style", self.voice_style_var, VOICE_DESIGN_OPTIONS["Style"]),
+            ("Accent", self.voice_accent_var, VOICE_DESIGN_OPTIONS["Accent"]),
         ]
 
         self.voice_widgets = []
@@ -721,6 +721,7 @@ class AudiobookTab(ttk.Frame):
     def _generate_speech(self):
         prepared_ref_path = None
         try:
+            ref_path = self._get_reference_audio()
             output_directory = self.output_dir_var.get().strip() or os.path.dirname(os.path.abspath(__file__))
             self._ui(self.output_dir_var.set, output_directory)
             os.makedirs(output_directory, exist_ok=True)
@@ -732,11 +733,6 @@ class AudiobookTab(ttk.Frame):
                 device_cb=self.studio_win.device_info_var.set
             ):
                 self._set_status("Failed to load model.")
-                return
-
-            ref_path = self.ref_audio_var.get().strip()
-            if ref_path and not os.path.exists(ref_path):
-                self._set_status(f"Error: Reference audio file not found: {ref_path}")
                 return
 
             is_saved_voice = bool(ref_path) and ref_path == self.saved_voice_path
@@ -883,6 +879,8 @@ class AudiobookTab(ttk.Frame):
                     self._set_status(f"Done. MP3 saved: {os.path.basename(mp3_path)}")
                 else:
                     self._set_status("Done. Files saved, but MP3 merge failed.")
+        except ValueError as exc:
+            self._set_status(str(exc))
         except Exception as exc:
             print("\nUncaught error in _generate_speech():")
             traceback.print_exc()
@@ -902,13 +900,10 @@ class AudiobookTab(ttk.Frame):
         def task():
             temp_out = self.last_sample_path
             try:
-                ref_path = self.ref_audio_var.get().strip()
+                ref_path = self._get_reference_audio()
                 is_saved_voice = bool(ref_path) and ref_path == self.saved_voice_path
 
                 if ref_path:
-                    if not os.path.exists(ref_path):
-                        self._set_status(f"Error: Reference audio file not found: {ref_path}")
-                        return
                     self._set_status("Generating sample using reference audio...")
                 else:
                     self._set_status("Auditioning a new random voice...")
@@ -966,6 +961,8 @@ class AudiobookTab(ttk.Frame):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
+            except ValueError as exc:
+                self._set_status(str(exc))
             except Exception as exc:
                 traceback.print_exc()
                 self._set_status(f"Sample error: {exc}")
@@ -1004,6 +1001,7 @@ class AudiobookTab(ttk.Frame):
         # it for every sentence, so the whole book uses this exact voice.
         self.saved_voice_path = saved_path
         self.ref_audio_var.set(saved_path)
+        self.voice_notebook.select(self.clone_voice_tab)
         self._set_status(f"Voice saved. The book will now use this voice: {os.path.basename(saved_path)}")
 
 
@@ -1025,7 +1023,6 @@ class VideoDubberTab(ttk.Frame):
         self.voice_gender_var = tk.StringVar(value="female")
         self.voice_age_var = tk.StringVar(value="young adult")
         self.voice_pitch_var = tk.StringVar(value="moderate pitch")
-        self.voice_style_var = tk.StringVar(value="")
         self.voice_accent_var = tk.StringVar(value="american accent")
         self.voice_var = tk.StringVar()
 
@@ -1057,7 +1054,6 @@ class VideoDubberTab(ttk.Frame):
             self.voice_gender_var,
             self.voice_age_var,
             self.voice_pitch_var,
-            self.voice_style_var,
             self.voice_accent_var,
         ):
             var.trace_add("write", self._update_voice_prompt)
@@ -1120,7 +1116,6 @@ class VideoDubberTab(ttk.Frame):
             self.voice_gender_var.get(),
             self.voice_age_var.get(),
             self.voice_pitch_var.get(),
-            self.voice_style_var.get(),
             self.voice_accent_var.get(),
         ]
         self.voice_var.set(", ".join(part for part in parts if part))
@@ -1282,11 +1277,10 @@ class VideoDubberTab(ttk.Frame):
         fields_left = [
             ("Gender", self.voice_gender_var, VOICE_DESIGN_OPTIONS["Gender"]),
             ("Pitch", self.voice_pitch_var, VOICE_DESIGN_OPTIONS["Pitch"]),
-            ("Accent", self.voice_accent_var, VOICE_DESIGN_OPTIONS["Accent"]),
         ]
         fields_right = [
             ("Age", self.voice_age_var, VOICE_DESIGN_OPTIONS["Age"]),
-            ("Style", self.voice_style_var, VOICE_DESIGN_OPTIONS["Style"]),
+            ("Accent", self.voice_accent_var, VOICE_DESIGN_OPTIONS["Accent"]),
         ]
 
         self.voice_widgets = []
@@ -1877,6 +1871,10 @@ class OmniVoiceStudioWindow(tk.Tk):
                   background=[("selected", "#a3e635")],
                   foreground=[("selected", "#161616")],
                   padding=[("selected", 10)])
+
+        style.configure("Voice.TNotebook", background="#202020", borderwidth=0)
+        style.configure("Voice.TNotebook.Tab", padding=(14, 6))
+        style.map("Voice.TNotebook.Tab", padding=[("selected", (14, 6))])
 
     def _build_layout(self):
         root_frame = ttk.Frame(self, style="Root.TFrame", padding=14)
